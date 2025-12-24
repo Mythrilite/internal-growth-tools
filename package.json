@@ -1,0 +1,48 @@
+{
+  "name": "internal-growth-tools",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Internal tools for lead generation and enrichment",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "test": "vitest",
+    "test:ui": "vitest --ui"
+  },
+  "dependencies": {
+    "next": "^16.0.6",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "papaparse": "^5.5.3",
+    "lucide-react": "^0.555.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "tailwind-merge": "^3.4.0",
+    "@radix-ui/react-label": "^2.1.8",
+    "@radix-ui/react-separator": "^1.1.8",
+    "@radix-ui/react-slot": "^1.2.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@types/papaparse": "^5.5.2",
+    "typescript": "^5",
+    "tailwindcss": "^4",
+    "@tailwindcss/postcss": "^4",
+    "vitest": "^4.0.16",
+    "@vitest/ui": "^4.0.16",
+    "eslint": "^9",
+    "eslint-config-next": "16.0.6"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Mythrilite/internal-growth-tools.git"
+  },
+  "keywords": ["lead-generation", "enrichment", "twitter", "linkedin"],
+  "author": "Mythrilite",
+  "license": "MIT",
+  "homepage": "https://github.com/Mythrilite/internal-growth-tools#readme"
+}
