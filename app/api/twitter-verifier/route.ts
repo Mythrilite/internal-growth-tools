@@ -94,20 +94,25 @@ export async function PATCH(request: NextRequest) {
     const apiKey = process.env.OPENROUTER_API_KEY;
 
     if (!apiKey) {
+      console.error("OPENROUTER_API_KEY not configured in environment");
       return NextResponse.json(
-        { error: "OPENROUTER_API_KEY not configured" },
+        { error: "OPENROUTER_API_KEY not configured. Please add it to your Vercel environment variables." },
         { status: 500 }
       );
     }
 
-    const { leads }: { leads: TwitterLead[] } = await request.json();
+    const body = await request.json();
+    const { leads }: { leads: TwitterLead[] } = body;
 
     if (!Array.isArray(leads) || leads.length === 0) {
+      console.error("Invalid leads array:", body);
       return NextResponse.json(
         { error: "Must provide an array of leads" },
         { status: 400 }
       );
     }
+
+    console.log(`Processing batch of ${leads.length} leads...`);
 
     // Process all leads in parallel
     const results = await Promise.allSettled(
@@ -124,6 +129,7 @@ export async function PATCH(request: NextRequest) {
           error: null
         };
       } else {
+        console.error(`Failed to analyze lead "${lead.name}":`, result.reason);
         return {
           lead,
           result: {
@@ -136,6 +142,8 @@ export async function PATCH(request: NextRequest) {
       }
     });
 
+    console.log(`Batch processing complete: ${processedLeads.length} leads processed`);
+
     return NextResponse.json({
       processed: processedLeads.length,
       results: processedLeads
@@ -145,6 +153,7 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json(
       {
         error: error instanceof Error ? error.message : "Failed to batch analyze leads",
+        details: error instanceof Error ? error.stack : undefined
       },
       { status: 500 }
     );

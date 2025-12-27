@@ -78,12 +78,17 @@ ${lead.twitter_handle ? `Twitter: @${lead.twitter_handle}` : ""}
 Analyze this lead and determine if they meet our criteria.`;
 
   try {
+    // Get the app URL - try NEXT_PUBLIC_APP_URL first, then VERCEL_URL, then fallback
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL
+      || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null)
+      || "https://myth-internal-growth-tools.vercel.app";
+
     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${apiKey}`,
-        "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
+        "HTTP-Referer": appUrl,
         "X-Title": "Mythrilite - Twitter Lead Verifier",
       },
       body: JSON.stringify({
@@ -103,6 +108,7 @@ Analyze this lead and determine if they meet our criteria.`;
 
     if (!response.ok) {
       const errorData = await response.text();
+      console.error(`OpenRouter API error (${response.status}):`, errorData);
       throw new Error(`OpenRouter API error: ${response.status} - ${errorData}`);
     }
 
@@ -110,13 +116,14 @@ Analyze this lead and determine if they meet our criteria.`;
     const content = data.choices?.[0]?.message?.content;
 
     if (!content) {
+      console.error("No content in OpenRouter response:", JSON.stringify(data));
       throw new Error("No content in response");
     }
 
     const result = JSON.parse(content) as FilterResult;
     return result;
   } catch (error) {
-    console.error(`Error analyzing lead: ${error}`);
+    console.error(`Error analyzing lead "${lead.name}":`, error);
     return {
       decision: "REJECT",
       reasoning: `Error during analysis: ${error instanceof Error ? error.message : String(error)}`,
