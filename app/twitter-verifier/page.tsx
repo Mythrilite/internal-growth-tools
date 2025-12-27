@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import * as Papa from "papaparse";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -23,6 +24,7 @@ export default function TwitterVerifierPage() {
   const [processing, setProcessing] = useState(false);
   const [stage, setStage] = useState<ProcessingStage>("idle");
   const [locationStats, setLocationStats] = useState<any>(null);
+  const [qualifiedLeads, setQualifiedLeads] = useState<TwitterLead[]>([]);
   const [currentBatch, setCurrentBatch] = useState(0);
   const [totalBatches, setTotalBatches] = useState(0);
   const [accepted, setAccepted] = useState<ProcessedLead[]>([]);
@@ -39,6 +41,7 @@ export default function TwitterVerifierPage() {
       setAccepted([]);
       setRejected([]);
       setLocationRejected([]);
+      setQualifiedLeads([]);
       setLocationStats(null);
       setStage("idle");
     }
@@ -52,6 +55,7 @@ export default function TwitterVerifierPage() {
     setAccepted([]);
     setRejected([]);
     setLocationRejected([]);
+    setQualifiedLeads([]);
     setLocationStats(null);
 
     try {
@@ -64,6 +68,7 @@ export default function TwitterVerifierPage() {
       const { qualifiedLeads, rejectedLeads, stats } = batchFilterByLocation(allLeads);
       setLocationStats(stats);
       setLocationRejected(rejectedLeads);
+      setQualifiedLeads(qualifiedLeads);
 
       // STAGE 3: Parallel AI verification on qualified leads only
       setStage("ai-verification");
@@ -143,6 +148,26 @@ export default function TwitterVerifierPage() {
     const a = document.createElement("a");
     a.href = url;
     a.download = filename;
+    a.click();
+    window.URL.revokeObjectURL(url);
+  };
+
+  const downloadQualifiedLeadsCSV = () => {
+    if (qualifiedLeads.length === 0) return;
+
+    // Convert qualified leads to CSV (these don't have filter_result yet)
+    const csv = Papa.unparse(qualifiedLeads, {
+      quotes: true,
+      quoteChar: '"',
+      escapeChar: '"',
+      header: true,
+    });
+
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `qualified_leads_pre_filter_${new Date().toISOString().split('T')[0]}.csv`;
     a.click();
     window.URL.revokeObjectURL(url);
   };
@@ -230,13 +255,27 @@ export default function TwitterVerifierPage() {
       {locationStats && (
         <Card className="mb-6">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Zap className="h-5 w-5 text-yellow-500" />
-              Stage 1: Fast Pre-Filter (Instant)
-            </CardTitle>
-            <CardDescription>
-              Location + Follower Count (100-5K) + Keyword matching without LLM
-            </CardDescription>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="flex items-center gap-2">
+                  <Zap className="h-5 w-5 text-yellow-500" />
+                  Stage 1: Fast Pre-Filter (Instant)
+                </CardTitle>
+                <CardDescription>
+                  Location + Follower Count (100-5K) + Keyword matching without LLM
+                </CardDescription>
+              </div>
+              {qualifiedLeads.length > 0 && (
+                <Button
+                  onClick={downloadQualifiedLeadsCSV}
+                  variant="outline"
+                  size="sm"
+                >
+                  <Download className="mr-2 h-4 w-4" />
+                  Download Qualified
+                </Button>
+              )}
+            </div>
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
