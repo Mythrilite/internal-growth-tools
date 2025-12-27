@@ -68,7 +68,7 @@ export default function TwitterVerifierPage() {
       const { qualifiedLeads, rejectedLeads, stats } = batchFilterByLocation(allLeads);
       setLocationStats(stats);
       setLocationRejected(rejectedLeads);
-      setQualifiedLeads(qualifiedLeads);
+      setQualifiedLeads(qualifiedLeads as TwitterLead[]);
 
       // STAGE 3: Parallel AI verification on qualified leads only
       setStage("ai-verification");
