@@ -231,10 +231,21 @@ export function convertToCSV(
 
   // Flatten the lead objects with filter results
   const data = leads.map((lead) => {
-    const { filter_result, ...leadData } = lead;
+    const { filter_result, public_metrics, ...leadData } = lead;
+
+    // Ensure public_metrics is properly serialized as a string
+    let publicMetricsStr = "";
+    if (public_metrics) {
+      if (typeof public_metrics === "string") {
+        publicMetricsStr = public_metrics;
+      } else {
+        publicMetricsStr = JSON.stringify(public_metrics);
+      }
+    }
 
     return {
       ...leadData,
+      public_metrics: publicMetricsStr,
       decision: filter_result.decision,
       reasoning: filter_result.reasoning,
       confidence: filter_result.confidence,

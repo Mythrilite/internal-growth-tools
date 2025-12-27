@@ -39,10 +39,6 @@ export default function Home() {
           </CardContent>
         </Card>
       </div>
-
-      <div className="mt-12 text-center text-sm text-muted-foreground">
-        <p>Built with Next.js, React, and Tailwind CSS</p>
-      </div>
     </div>
   );
 }

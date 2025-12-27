@@ -166,8 +166,8 @@ export default function LinkedInEnricherPage() {
       for (let i = 0; i < results.length; i += BATCH_SIZE) {
         const batch = results.slice(i, i + BATCH_SIZE);
 
-        const response = await fetch("/api/linkedin-enricher/enrich-batch", {
-          method: "POST",
+        const response = await fetch("/api/linkedin-enricher", {
+          method: "PATCH",
           headers: {
             "Content-Type": "application/json",
           },
@@ -180,8 +180,8 @@ export default function LinkedInEnricherPage() {
 
         const data = await response.json();
         enrichedLeads.push(...data.results);
-        successCount += data.success_count;
-        failCount += data.fail_count;
+        successCount += data.enriched;
+        failCount += data.failed_enrichments;
 
         // Update progress
         const processed = Math.min(i + BATCH_SIZE, results.length);

@@ -116,6 +116,18 @@ export default function TwitterVerifierPage() {
       }
 
       setStage("complete");
+
+      // Automatically download accepted leads CSV
+      if (acceptedLeads.length > 0) {
+        const csv = convertToCSV(acceptedLeads);
+        const blob = new Blob([csv], { type: "text/csv" });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `accepted_leads_${new Date().toISOString().split('T')[0]}.csv`;
+        a.click();
+        window.URL.revokeObjectURL(url);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to process leads");
       setStage("idle");
