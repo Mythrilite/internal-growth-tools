@@ -19,6 +19,9 @@
   --color-input: oklch(91.4% 0.032 285.9);
   --color-ring: oklch(85% 0.15 145);
   --radius: 0.5rem;
+
+  --font-sans: var(--font-roboto-mono), ui-monospace, monospace;
+  --font-mono: var(--font-roboto-mono), ui-monospace, monospace;
 }
 
 * {

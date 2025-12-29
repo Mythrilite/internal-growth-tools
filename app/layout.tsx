@@ -1,5 +1,12 @@
 import type { Metadata } from "next";
+import { Roboto_Mono } from "next/font/google";
 import "./globals.css";
+
+const robotoMono = Roboto_Mono({
+  subsets: ["latin"],
+  variable: "--font-roboto-mono",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   title: "Internal Growth Tools",
@@ -12,8 +19,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="h-full">
-      <body className="h-full antialiased">
+    <html lang="en" className={`h-full ${robotoMono.variable}`}>
+      <body className="h-full antialiased font-mono">
         {children}
       </body>
     </html>
