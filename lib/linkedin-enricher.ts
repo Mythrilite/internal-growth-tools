@@ -190,15 +190,36 @@ Analyze this LinkedIn profile and determine if they meet our ICP criteria.`;
     if (!response.ok) {
       const errorData = await response.text();
       console.error(`[filterByICP] OpenRouter error:`, errorData);
-      throw new Error(`OpenRouter API error: ${response.status} - ${errorData}`);
+      // Don't throw - return REJECT instead to allow batch to continue
+      return {
+        decision: "REJECT",
+        reasoning: `OpenRouter API error: ${response.status}`,
+        confidence: "LOW",
+      };
     }
 
     const data = await response.json();
+
+    // Check if OpenRouter/provider returned an error
+    const providerError = data.choices?.[0]?.error;
+    if (providerError) {
+      console.error(`[filterByICP] Provider error for "${profile.name}":`, providerError);
+      return {
+        decision: "REJECT",
+        reasoning: `Provider error: ${providerError.message || 'Unknown error'}`,
+        confidence: "LOW",
+      };
+    }
+
     const content = data.choices?.[0]?.message?.content;
 
     if (!content) {
-      console.error(`[filterByICP] No content in response`);
-      throw new Error("No content in response");
+      console.error(`[filterByICP] No content in response for ${profile.name}`);
+      return {
+        decision: "REJECT",
+        reasoning: "No content in AI response",
+        confidence: "LOW",
+      };
     }
 
     const result = JSON.parse(content) as ICPFilterResult;
@@ -252,24 +273,40 @@ export async function enrichContact(
     const emails = contacts.filter((c: any) => c.type === "email");
     console.log(`[enrichContact] Found ${emails.length} emails:`, emails.map((e: any) => `${e.value} (${e.subType}, rating: ${e.rating})`));
 
+    // Personal email domains to exclude
+    const personalDomains = [
+      'gmail.com', 'yahoo.com', 'aol.com', 'hotmail.com', 'outlook.com',
+      'icloud.com', 'me.com', 'mac.com', 'live.com', 'msn.com',
+      'ymail.com', 'rocketmail.com', 'googlemail.com', 'protonmail.com',
+      'mail.com', 'zoho.com', 'gmx.com', 'inbox.com'
+    ];
+
+    // Filter out personal email domains
+    const isPersonalEmail = (email: string) => {
+      const domain = email.toLowerCase().split('@')[1];
+      return personalDomains.includes(domain);
+    };
+
     // Prioritize email selection based on Clado's subTypes:
     // - "verified": Work emails (corporate domains) - HIGHEST PRIORITY
     // - "work": Work emails (if exists)
     // - "professional": Professional emails
-    // - "risky": Personal/unverified emails - EXCLUDE unless high rating (95+)
+    // - "risky": Personal/unverified emails - EXCLUDE
+    // IMPORTANT: Completely exclude personal email domains (Gmail, Yahoo, etc.)
 
-    // Filter out clearly personal emails (risky with low rating)
-    const verifiedEmails = emails.filter((c: any) => c.subType === "verified");
-    const workEmails = emails.filter((c: any) => c.subType === "work");
-    const professionalEmails = emails.filter((c: any) => c.subType === "professional");
-    const highQualityRiskyEmails = emails.filter((c: any) => c.subType === "risky" && c.rating >= 95);
+    // Filter out personal domains and categorize by subType
+    const verifiedEmails = emails.filter((c: any) => c.subType === "verified" && !isPersonalEmail(c.value));
+    const workEmails = emails.filter((c: any) => c.subType === "work" && !isPersonalEmail(c.value));
+    const professionalEmails = emails.filter((c: any) => c.subType === "professional" && !isPersonalEmail(c.value));
+
+    console.log(`[enrichContact] After filtering personal domains: ${verifiedEmails.length} verified, ${workEmails.length} work, ${professionalEmails.length} professional`);
 
     // Combine and sort by priority, then by rating
+    // ONLY include verified, work, and professional emails (NO risky/personal)
     const prioritizedEmails = [
       ...verifiedEmails,
       ...workEmails,
       ...professionalEmails,
-      ...highQualityRiskyEmails
     ];
 
     // Sort by rating (descending) within the prioritized list
@@ -279,7 +316,7 @@ export async function enrichContact(
     const selectedEmail = prioritizedEmails[0] || null;
 
     if (!selectedEmail) {
-      console.log("[enrichContact] No work or professional email found (all were risky/personal)");
+      console.log("[enrichContact] No work email found (excluded all personal domains: Gmail, Yahoo, Outlook, etc.)");
     } else {
       console.log(`[enrichContact] Selected email: ${selectedEmail.value} (${selectedEmail.subType}, rating: ${selectedEmail.rating})`);
     }

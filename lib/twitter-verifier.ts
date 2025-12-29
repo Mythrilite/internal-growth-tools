@@ -114,15 +114,36 @@ Analyze this lead and determine if they meet our criteria.`;
     if (!response.ok) {
       const errorData = await response.text();
       console.error(`OpenRouter API error (${response.status}):`, errorData);
-      throw new Error(`OpenRouter API error: ${response.status} - ${errorData}`);
+      // Don't throw - return REJECT instead to allow batch to continue
+      return {
+        decision: "REJECT",
+        reasoning: `OpenRouter API error: ${response.status}`,
+        confidence: "LOW",
+      };
     }
 
     const data = await response.json();
+
+    // Check if OpenRouter/provider returned an error
+    const providerError = data.choices?.[0]?.error;
+    if (providerError) {
+      console.error(`Provider error for "${lead.name}":`, providerError);
+      return {
+        decision: "REJECT",
+        reasoning: `Provider error: ${providerError.message || 'Unknown error'}`,
+        confidence: "LOW",
+      };
+    }
+
     const content = data.choices?.[0]?.message?.content;
 
     if (!content) {
       console.error("No content in OpenRouter response:", JSON.stringify(data));
-      throw new Error("No content in response");
+      return {
+        decision: "REJECT",
+        reasoning: "No content in AI response",
+        confidence: "LOW",
+      };
     }
 
     const result = JSON.parse(content) as FilterResult;
