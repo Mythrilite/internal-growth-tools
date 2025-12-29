@@ -119,7 +119,9 @@ export default function LinkedInEnricherPage() {
         });
 
         if (!filterResponse.ok) {
-          throw new Error("Failed to filter batch");
+          const errorData = await filterResponse.json();
+          console.error(`[Frontend] Filter API error:`, errorData);
+          throw new Error(errorData.error || `Failed to filter batch (${filterResponse.status})`);
         }
 
         const { results } = await filterResponse.json();
