@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -14,7 +15,7 @@ import { Download, Loader2, CheckCircle2, AlertCircle, Mail, Users, ArrowLeft } 
 type ProcessingStage = "idle" | "fetching" | "filtering" | "enriching" | "complete";
 
 export default function LinkedInEnricherPage() {
-  const [postUrl, setPostUrl] = useState("");
+  const [postUrls, setPostUrls] = useState("");
   const [processing, setProcessing] = useState(false);
   const [enriching, setEnriching] = useState(false);
   const [stage, setStage] = useState<ProcessingStage>("idle");
@@ -34,9 +35,14 @@ export default function LinkedInEnricherPage() {
   } | null>(null);
 
   const handleSubmit = async () => {
-    if (!postUrl.trim()) return;
+    if (!postUrls.trim()) return;
 
-    console.log("[Frontend] Starting processing for URL:", postUrl);
+    // Parse URLs (one per line)
+    const urls = postUrls.split('\n').map(url => url.trim()).filter(url => url.length > 0);
+
+    if (urls.length === 0) return;
+
+    console.log(`[Frontend] Starting processing for ${urls.length} URL(s):`, urls);
     setProcessing(true);
     setError(null);
     setResults([]);
@@ -44,30 +50,44 @@ export default function LinkedInEnricherPage() {
     setProgress(null);
 
     try {
-      // STAGE 1: Fetch reactions
+      // STAGE 1: Fetch reactions from all URLs in parallel
       setStage("fetching");
-      setProgress({ stage: "Fetching reactions from LinkedIn post", current: 0, total: 0 });
+      setProgress({ stage: `Fetching reactions from ${urls.length} LinkedIn post(s)`, current: 0, total: urls.length });
 
-      console.log("[Frontend] Fetching reactions");
-      const fetchResponse = await fetch("/api/linkedin-enricher/fetch", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ post_url: postUrl }),
-      });
+      console.log("[Frontend] Fetching reactions from multiple URLs in parallel");
+      const fetchPromises = urls.map(url =>
+        fetch("/api/linkedin-enricher/fetch", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ post_url: url }),
+        }).then(async (response) => {
+          if (!response.ok) {
+            const errorData = await response.json();
+            console.error(`Failed to fetch ${url}:`, errorData.error);
+            return { profiles: [], url, error: errorData.error };
+          }
+          const data = await response.json();
+          return { profiles: data.profiles, url, error: null };
+        })
+      );
 
-      if (!fetchResponse.ok) {
-        const errorData = await fetchResponse.json();
-        throw new Error(errorData.error || "Failed to fetch reactions");
+      const fetchResults = await Promise.all(fetchPromises);
+
+      // Aggregate all profiles
+      const allProfiles = fetchResults.flatMap(result => result.profiles);
+      const failedUrls = fetchResults.filter(r => r.error).map(r => r.url);
+
+      if (failedUrls.length > 0) {
+        console.warn(`[Frontend] Failed to fetch from ${failedUrls.length} URL(s):`, failedUrls);
       }
 
-      const { profiles, total } = await fetchResponse.json();
-      console.log(`[Frontend] Fetched ${profiles.length} profiles`);
+      console.log(`[Frontend] Fetched ${allProfiles.length} total profiles from ${urls.length} post(s)`);
 
-      setProgress({ stage: "Fetching complete", current: profiles.length, total: profiles.length });
+      setProgress({ stage: "Fetching complete", current: allProfiles.length, total: allProfiles.length });
 
-      if (profiles.length === 0) {
+      if (allProfiles.length === 0) {
         setStats({
           total_reactions: 0,
           reactions_fetched: 0,
@@ -82,13 +102,13 @@ export default function LinkedInEnricherPage() {
 
       // STAGE 2: Filter by ICP in batches (client-side for progress tracking)
       setStage("filtering");
-      setProgress({ stage: "Filtering by ICP", current: 0, total: profiles.length });
+      setProgress({ stage: "Filtering by ICP", current: 0, total: allProfiles.length });
 
       const BATCH_SIZE = 20;
       const allFilteredResults: any[] = [];
 
-      for (let i = 0; i < profiles.length; i += BATCH_SIZE) {
-        const batch = profiles.slice(i, i + BATCH_SIZE);
+      for (let i = 0; i < allProfiles.length; i += BATCH_SIZE) {
+        const batch = allProfiles.slice(i, i + BATCH_SIZE);
 
         const filterResponse = await fetch("/api/linkedin-enricher/filter", {
           method: "POST",
@@ -106,11 +126,11 @@ export default function LinkedInEnricherPage() {
         allFilteredResults.push(...results);
 
         // Update progress
-        const processed = Math.min(i + BATCH_SIZE, profiles.length);
-        setProgress({ stage: "Filtering by ICP", current: processed, total: profiles.length });
+        const processed = Math.min(i + BATCH_SIZE, allProfiles.length);
+        setProgress({ stage: "Filtering by ICP", current: processed, total: allProfiles.length });
 
         // Small delay between batches
-        if (i + BATCH_SIZE < profiles.length) {
+        if (i + BATCH_SIZE < allProfiles.length) {
           await new Promise(resolve => setTimeout(resolve, 100));
         }
       }
@@ -118,7 +138,7 @@ export default function LinkedInEnricherPage() {
       // Filter for accepted leads
       const acceptedLeads = allFilteredResults.filter(r => r.icp_result.decision === "ACCEPT");
 
-      console.log(`[Frontend] Filtering complete: ${acceptedLeads.length}/${profiles.length} qualified`);
+      console.log(`[Frontend] Filtering complete: ${acceptedLeads.length}/${allProfiles.length} qualified`);
 
       // Convert to enriched lead format with PENDING status
       const pendingLeads = acceptedLeads.map(item => ({
@@ -129,8 +149,8 @@ export default function LinkedInEnricherPage() {
       }));
 
       setStats({
-        total_reactions: profiles.length,
-        reactions_fetched: profiles.length,
+        total_reactions: allProfiles.length,
+        reactions_fetched: allProfiles.length,
         icp_qualified: acceptedLeads.length,
         enriched: 0,
         failed_enrichments: 0,
@@ -265,27 +285,29 @@ export default function LinkedInEnricherPage() {
       {/* Input Section */}
       <Card className="mb-6">
         <CardHeader>
-          <CardTitle>LinkedIn Post URL</CardTitle>
+          <CardTitle>LinkedIn Post URLs</CardTitle>
           <CardDescription>
-            Enter a LinkedIn post URL to extract and enrich reactions
+            Enter one or more LinkedIn post URLs (one per line) to extract and enrich reactions
           </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
             <div className="grid w-full items-center gap-1.5">
-              <Label htmlFor="post-url">Post URL</Label>
-              <Input
-                id="post-url"
-                type="text"
-                placeholder="https://www.linkedin.com/posts/username_activity-123456789"
-                value={postUrl}
-                onChange={(e) => setPostUrl(e.target.value)}
+              <Label htmlFor="post-urls">Post URLs (one per line)</Label>
+              <Textarea
+                id="post-urls"
+                placeholder="https://www.linkedin.com/posts/username_activity-123456789
+https://www.linkedin.com/posts/username2_activity-987654321
+https://www.linkedin.com/posts/username3_activity-555555555"
+                rows={5}
+                value={postUrls}
+                onChange={(e) => setPostUrls(e.target.value)}
                 disabled={processing}
               />
             </div>
             <Button
               onClick={handleSubmit}
-              disabled={!postUrl.trim() || processing}
+              disabled={!postUrls.trim() || processing}
               className="w-full sm:w-auto"
             >
               {processing ? (
