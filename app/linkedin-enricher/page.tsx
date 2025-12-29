@@ -208,6 +208,19 @@ export default function LinkedInEnricherPage() {
       setResults(enrichedLeads);
       setProgress(null);
       setStage("complete");
+
+      // Auto-download CSV with enriched leads
+      const successfulLeads = enrichedLeads.filter(lead => lead.enrichment_status === "SUCCESS");
+      if (successfulLeads.length > 0) {
+        const csv = convertToCSV(successfulLeads);
+        const blob = new Blob([csv], { type: "text/csv" });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `linkedin_enriched_leads_${new Date().toISOString().split('T')[0]}.csv`;
+        a.click();
+        window.URL.revokeObjectURL(url);
+      }
     } catch (err) {
       console.error("[Frontend] Enrichment error:", err);
       setError(err instanceof Error ? err.message : "Failed to enrich contacts");
