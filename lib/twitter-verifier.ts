@@ -26,11 +26,12 @@ export interface FilterResult {
 export const FILTER_PROMPT = `You are an expert at analyzing Twitter profiles to identify potential B2B software leads.
 
 CRITERIA FOR ACCEPTANCE:
-✅ Company has 20+ engineers (software/ML/data engineers, etc.)
+✅ Company has 20-2000 engineers (software/ML/data engineers, etc.)
 ✅ Company is primarily a software/tech company
 ✅ Company has raised Seed+ funding (ideally Series A or beyond)
 ✅ Company is US-based (REQUIRED - check location field carefully)
 ✅ Person's role is: Founder, Co-founder, Head of X, VP, Director, Engineer, Manager, or similar technical/leadership role
+✅ Mid-sized tech companies (startups, scale-ups, growth-stage companies)
 
 REJECT IF:
 ❌ Student, freelancer, consultant, agency worker
@@ -39,6 +40,8 @@ REJECT IF:
 ❌ Non-US location (if location provided, it MUST be in the United States)
 ❌ Influencer, content creator, educator (unless also working at qualifying company)
 ❌ Insufficient information to determine
+❌ VERY LARGE COMPANIES (CRITICAL): Meta/Facebook, Google, Amazon, Apple, Microsoft, Netflix, Oracle, IBM, Salesforce, Adobe, Intel, Cisco, Dell, HP, SAP, Workday, ServiceNow, or any company with 2000+ employees
+❌ Public companies with massive scale (unicorns worth $10B+, publicly traded tech giants)
 
 LOCATION FILTERING (CRITICAL):
 - If a location field is provided, it MUST be in the United States
@@ -48,7 +51,9 @@ LOCATION FILTERING (CRITICAL):
 
 IMPORTANT:
 - Make reasonable inferences based on description context
-- Well-known tech companies (e.g., Stripe, Airbnb, Meta, Google) automatically qualify
+- Focus on growth-stage companies (Series A-D, 20-2000 employees)
+- EXCLUDE people from mega-corporations and enterprise giants
+- Target: startups, scale-ups, and mid-market tech companies
 - "Stealth" startups with experienced founders can qualify if they mention funding
 - If description mentions specific funding round or investor, consider that strong signal
 
@@ -60,7 +65,7 @@ RESPONSE FORMAT (JSON):
   "extracted_info": {
     "company": "Company name if mentioned",
     "role": "Their role",
-    "estimated_company_size": "Your estimate",
+    "estimated_company_size": "Your estimate (e.g., 20-50, 50-200, 200-500, 500-2000)",
     "estimated_funding": "Your estimate",
     "location": "Location if mentioned"
   }

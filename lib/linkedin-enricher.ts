@@ -39,20 +39,24 @@ export const ICP_FILTER_PROMPT = `You are an expert at qualifying B2B software l
 CRITERIA FOR ACCEPTANCE:
 ✅ Technical role (Engineer, Engineering Manager, Director of Engineering, VP Engineering, CTO, Founder, Head of Engineering, Staff Engineer, Principal Engineer, Senior Engineer)
 ✅ Mid-level+ seniority OR leadership role
-✅ Software/tech company (20+ engineers estimated)
+✅ Software/tech company (20-2000 engineers estimated)
 ✅ US-based (if location mentioned in headline)
-✅ Well-known tech companies automatically qualify (FAANG, Stripe, Airbnb, Uber, etc.)
+✅ Mid-sized tech companies (startups, scale-ups, growth-stage companies)
 
 REJECT IF:
 ❌ Student, intern, freelancer, recruiter, HR roles
 ❌ Non-tech company (retail, hospitality, traditional services)
-❌ Junior roles unless at well-known tech company
+❌ Junior roles unless at promising startup
 ❌ Consultant, agency worker (unless at major consultancy)
 ❌ Insufficient information to determine
+❌ VERY LARGE COMPANIES (CRITICAL): Meta/Facebook, Google, Amazon, Apple, Microsoft, Netflix, Oracle, IBM, Salesforce, Adobe, Intel, Cisco, Dell, HP, SAP, Workday, ServiceNow, or any company with 2000+ employees
+❌ Public companies with massive scale (unicorns worth $10B+, publicly traded tech giants)
 
 IMPORTANT:
 - Make reasonable inferences based on headline and company
-- Focus on technical roles and leadership positions
+- Focus on technical roles at growth-stage companies (Series A-D, 20-2000 employees)
+- EXCLUDE people from mega-corporations and enterprise giants
+- Target: startups, scale-ups, and mid-market tech companies
 - Company size estimate based on company name recognition and industry
 
 RESPONSE FORMAT (JSON):
@@ -64,7 +68,7 @@ RESPONSE FORMAT (JSON):
     "company": "Company name if mentioned",
     "role": "Their role title",
     "seniority_level": "Junior/Mid/Senior/Leadership",
-    "estimated_company_size": "Your estimate (e.g., 20-50, 50-200, 200+)"
+    "estimated_company_size": "Your estimate (e.g., 20-50, 50-200, 200-500, 500-2000)"
   }
 }`;
 
