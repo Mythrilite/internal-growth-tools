@@ -155,12 +155,17 @@ Headline: ${profile.headline}
 Analyze this LinkedIn profile and determine if they meet our ICP criteria.`;
 
   try {
+    // Get the app URL - try NEXT_PUBLIC_APP_URL first, then VERCEL_URL, then fallback
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL
+      || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null)
+      || "https://myth-internal-growth-tools.vercel.app";
+
     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${openRouterKey}`,
-        "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
+        "HTTP-Referer": appUrl,
         "X-Title": "Mythrilite - LinkedIn Enricher",
       },
       body: JSON.stringify({
@@ -211,7 +216,7 @@ export async function enrichContact(
 ): Promise<ContactData> {
   console.log("[enrichContact] Enriching:", linkedinUrl);
   try {
-    const url = `https://search.clado.ai/api/enrich/contacts?linkedin_url=${encodeURIComponent(linkedinUrl)}`;
+    const url = `https://search.clado.ai/api/enrich/contacts?linkedin_url=${encodeURIComponent(linkedinUrl)}&email_enrichment=true`;
     console.log("[enrichContact] Fetching:", url);
 
     const response = await fetch(url, {
@@ -239,23 +244,48 @@ export async function enrichContact(
     const contacts = data.data?.[0]?.contacts || [];
     console.log(`[enrichContact] Found ${contacts.length} contacts`);
 
-    // Find ANY email (not just work - can be risky, personal, etc.)
+    // Find all emails
     const emails = contacts.filter((c: any) => c.type === "email");
     console.log(`[enrichContact] Found ${emails.length} emails:`, emails.map((e: any) => `${e.value} (${e.subType}, rating: ${e.rating})`));
 
-    // Prefer work emails, but accept any email type
-    const workEmail = emails.find((c: any) => c.subType === "work");
-    const anyEmail = workEmail || emails[0]; // Use first available email if no work email
+    // Prioritize email selection based on Clado's subTypes:
+    // - "verified": Work emails (corporate domains) - HIGHEST PRIORITY
+    // - "work": Work emails (if exists)
+    // - "professional": Professional emails
+    // - "risky": Personal/unverified emails - EXCLUDE unless high rating (95+)
 
-    // Find phone
-    const phone = contacts.find((c: any) => c.type === "phone");
+    // Filter out clearly personal emails (risky with low rating)
+    const verifiedEmails = emails.filter((c: any) => c.subType === "verified");
+    const workEmails = emails.filter((c: any) => c.subType === "work");
+    const professionalEmails = emails.filter((c: any) => c.subType === "professional");
+    const highQualityRiskyEmails = emails.filter((c: any) => c.subType === "risky" && c.rating >= 95);
+
+    // Combine and sort by priority, then by rating
+    const prioritizedEmails = [
+      ...verifiedEmails,
+      ...workEmails,
+      ...professionalEmails,
+      ...highQualityRiskyEmails
+    ];
+
+    // Sort by rating (descending) within the prioritized list
+    prioritizedEmails.sort((a: any, b: any) => (b.rating || 0) - (a.rating || 0));
+
+    // Choose best email
+    const selectedEmail = prioritizedEmails[0] || null;
+
+    if (!selectedEmail) {
+      console.log("[enrichContact] No work or professional email found (all were risky/personal)");
+    } else {
+      console.log(`[enrichContact] Selected email: ${selectedEmail.value} (${selectedEmail.subType}, rating: ${selectedEmail.rating})`);
+    }
 
     const result = {
-      email: anyEmail?.value,
-      email_rating: anyEmail?.rating,
-      email_subtype: anyEmail?.subType,
-      phone: phone?.value,
-      phone_rating: phone?.rating,
+      email: selectedEmail?.value,
+      email_rating: selectedEmail?.rating,
+      email_subtype: selectedEmail?.subType,
+      phone: undefined,
+      phone_rating: undefined,
     };
 
     console.log("[enrichContact] Extracted contact data:", result);
