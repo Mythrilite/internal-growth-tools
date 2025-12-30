@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,10 +9,65 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
-import { convertToCSV, type EnrichedLead } from "@/lib/linkedin-enricher";
-import { Download, Loader2, CheckCircle2, AlertCircle, Mail, Users, ArrowLeft } from "lucide-react";
+import { convertToCSV, type EnrichedLead, type LinkedInProfile, type ICPFilterResult } from "@/lib/linkedin-enricher";
+import { Download, Loader2, CheckCircle2, AlertCircle, Mail, Users, ArrowLeft, RotateCcw, Trash2 } from "lucide-react";
 
 type ProcessingStage = "idle" | "fetching" | "filtering" | "enriching" | "complete";
+
+const STORAGE_KEY = "linkedin-enricher-progress";
+
+interface SavedState {
+  urls: string[];
+  allProfiles: LinkedInProfile[];
+  filteredResults: Array<{ profile: LinkedInProfile; icp_result: ICPFilterResult }>;
+  results: EnrichedLead[];
+  stats: {
+    total_reactions: number;
+    reactions_fetched: number;
+    icp_qualified: number;
+    enriched: number;
+    failed_enrichments: number;
+  };
+  stage: ProcessingStage;
+  filterIndex: number;
+  enrichIndex: number;
+  savedAt: number;
+}
+
+// Helper functions for localStorage persistence
+const saveProgress = (state: SavedState) => {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    console.log("[Progress] Saved state:", state.stage, "filter:", state.filterIndex, "enrich:", state.enrichIndex);
+  } catch (e) {
+    console.error("[Progress] Failed to save:", e);
+  }
+};
+
+const loadProgress = (): SavedState | null => {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      const state = JSON.parse(saved) as SavedState;
+      // Check if saved state is less than 24 hours old
+      if (Date.now() - state.savedAt < 24 * 60 * 60 * 1000) {
+        return state;
+      }
+    }
+  } catch (e) {
+    console.error("[Progress] Failed to load:", e);
+  }
+  return null;
+};
+
+const clearProgress = () => {
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+    console.log("[Progress] Cleared saved state");
+  } catch (e) {
+    console.error("[Progress] Failed to clear:", e);
+  }
+};
 
 export default function LinkedInEnricherPage() {
   const [postUrls, setPostUrls] = useState("");
@@ -33,6 +88,237 @@ export default function LinkedInEnricherPage() {
     current: number;
     total: number;
   } | null>(null);
+  const [savedState, setSavedState] = useState<SavedState | null>(null);
+
+  // Check for saved progress on mount
+  useEffect(() => {
+    const saved = loadProgress();
+    if (saved && saved.stage !== "complete" && saved.stage !== "idle") {
+      setSavedState(saved);
+      console.log("[Progress] Found saved state from", new Date(saved.savedAt).toLocaleString());
+    }
+  }, []);
+
+  // Resume from saved state
+  const handleResume = useCallback(async () => {
+    if (!savedState) return;
+
+    console.log("[Resume] Resuming from saved state:", savedState.stage);
+    setPostUrls(savedState.urls.join('\n'));
+    setStats(savedState.stats);
+    setError(null);
+
+    if (savedState.stage === "filtering") {
+      // Resume filtering
+      setProcessing(true);
+      setStage("filtering");
+      await resumeFiltering(savedState);
+    } else if (savedState.stage === "enriching") {
+      // Resume enriching - first restore results
+      setResults(savedState.results);
+      setEnriching(true);
+      setStage("enriching");
+      await resumeEnriching(savedState);
+    } else {
+      // Just restore the state
+      setResults(savedState.results);
+      setStage(savedState.stage);
+    }
+
+    setSavedState(null);
+  }, [savedState]);
+
+  // Discard saved progress
+  const handleDiscardSaved = useCallback(() => {
+    clearProgress();
+    setSavedState(null);
+  }, []);
+
+  // Resume filtering from saved state
+  const resumeFiltering = async (saved: SavedState) => {
+    const BATCH_SIZE = 20;
+    const allProfiles = saved.allProfiles;
+    const allFilteredResults = [...saved.filteredResults];
+    let startIndex = saved.filterIndex;
+
+    setProgress({ stage: "Filtering by ICP (resumed)", current: startIndex, total: allProfiles.length });
+
+    try {
+      for (let i = startIndex; i < allProfiles.length; i += BATCH_SIZE) {
+        const batch = allProfiles.slice(i, i + BATCH_SIZE);
+
+        const filterResponse = await fetch("/api/linkedin-enricher/filter", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ profiles: batch }),
+        });
+
+        if (!filterResponse.ok) {
+          const text = await filterResponse.text();
+          let errorMessage = `Failed to filter batch (${filterResponse.status})`;
+          try {
+            const errorData = JSON.parse(text);
+            errorMessage = errorData.error || errorMessage;
+          } catch {
+            errorMessage = text.slice(0, 100) || errorMessage;
+          }
+          throw new Error(errorMessage);
+        }
+
+        const { results } = await filterResponse.json();
+        allFilteredResults.push(...results);
+
+        const processed = Math.min(i + BATCH_SIZE, allProfiles.length);
+        setProgress({ stage: "Filtering by ICP (resumed)", current: processed, total: allProfiles.length });
+
+        // Save progress after each batch
+        saveProgress({
+          ...saved,
+          filteredResults: allFilteredResults,
+          filterIndex: processed,
+          savedAt: Date.now(),
+        });
+
+        if (i + BATCH_SIZE < allProfiles.length) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+      }
+
+      // Filtering complete
+      const acceptedLeads = allFilteredResults.filter(r => r.icp_result.decision === "ACCEPT");
+      const pendingLeads = acceptedLeads.map(item => ({
+        profile: item.profile,
+        icp_result: item.icp_result,
+        contact: {},
+        enrichment_status: "PENDING" as const,
+      }));
+
+      const newStats = {
+        ...saved.stats,
+        icp_qualified: acceptedLeads.length,
+      };
+
+      setStats(newStats);
+      setResults(pendingLeads);
+      setProgress(null);
+      setStage("complete");
+      setProcessing(false);
+
+      // Save completed filter state
+      saveProgress({
+        ...saved,
+        filteredResults: allFilteredResults,
+        results: pendingLeads,
+        stats: newStats,
+        stage: "complete",
+        filterIndex: allProfiles.length,
+        savedAt: Date.now(),
+      });
+    } catch (err) {
+      console.error("[Resume] Filter error:", err);
+      setError(err instanceof Error ? err.message : "Failed to resume filtering");
+      setProcessing(false);
+      setProgress(null);
+    }
+  };
+
+  // Resume enriching from saved state
+  const resumeEnriching = async (saved: SavedState) => {
+    const BATCH_SIZE = 5;
+    const leadsToEnrich = saved.results;
+    const enrichedLeads: EnrichedLead[] = [];
+    let startIndex = saved.enrichIndex;
+    let successCount = saved.stats.enriched;
+    let failCount = saved.stats.failed_enrichments;
+
+    // Copy already enriched leads
+    for (let i = 0; i < startIndex && i < leadsToEnrich.length; i++) {
+      enrichedLeads.push(leadsToEnrich[i]);
+    }
+
+    setProgress({ stage: "Enriching contacts (resumed)", current: startIndex, total: leadsToEnrich.length });
+
+    try {
+      for (let i = startIndex; i < leadsToEnrich.length; i += BATCH_SIZE) {
+        const batch = leadsToEnrich.slice(i, i + BATCH_SIZE);
+
+        const response = await fetch("/api/linkedin-enricher", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ leads: batch }),
+        });
+
+        if (!response.ok) {
+          const text = await response.text();
+          let errorMessage = `Failed to enrich batch (${response.status})`;
+          try {
+            const errorData = JSON.parse(text);
+            errorMessage = errorData.error || errorMessage;
+          } catch {
+            errorMessage = text.slice(0, 100) || errorMessage;
+          }
+          throw new Error(errorMessage);
+        }
+
+        const data = await response.json();
+        enrichedLeads.push(...data.results);
+        successCount += data.enriched;
+        failCount += data.failed_enrichments;
+
+        const processed = Math.min(i + BATCH_SIZE, leadsToEnrich.length);
+        setProgress({ stage: "Enriching contacts (resumed)", current: processed, total: leadsToEnrich.length });
+
+        // Update results and stats in real-time
+        setResults([...enrichedLeads, ...leadsToEnrich.slice(processed)]);
+        const currentStats = {
+          ...saved.stats,
+          enriched: successCount,
+          failed_enrichments: failCount,
+        };
+        setStats(currentStats);
+
+        // Save progress after each batch
+        saveProgress({
+          ...saved,
+          results: [...enrichedLeads, ...leadsToEnrich.slice(processed)],
+          stats: currentStats,
+          enrichIndex: processed,
+          savedAt: Date.now(),
+        });
+
+        if (i + BATCH_SIZE < leadsToEnrich.length) {
+          await new Promise(resolve => setTimeout(resolve, 200));
+        }
+      }
+
+      // Enrichment complete
+      setResults(enrichedLeads);
+      setProgress(null);
+      setStage("complete");
+      setEnriching(false);
+
+      // Clear saved state on completion
+      clearProgress();
+
+      // Auto-download CSV
+      const successfulLeads = enrichedLeads.filter(lead => lead.enrichment_status === "SUCCESS");
+      if (successfulLeads.length > 0) {
+        const csv = convertToCSV(successfulLeads);
+        const blob = new Blob([csv], { type: "text/csv" });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `linkedin_enriched_leads_${new Date().toISOString().split('T')[0]}.csv`;
+        a.click();
+        window.URL.revokeObjectURL(url);
+      }
+    } catch (err) {
+      console.error("[Resume] Enrich error:", err);
+      setError(err instanceof Error ? err.message : "Failed to resume enrichment");
+      setEnriching(false);
+      setProgress(null);
+    }
+  };
 
   const handleSubmit = async () => {
     if (!postUrls.trim()) return;
@@ -113,7 +399,16 @@ export default function LinkedInEnricherPage() {
       setProgress({ stage: "Filtering by ICP", current: 0, total: allProfiles.length });
 
       const BATCH_SIZE = 20;
-      const allFilteredResults: any[] = [];
+      const allFilteredResults: Array<{ profile: LinkedInProfile; icp_result: ICPFilterResult }> = [];
+
+      // Initialize stats for saving progress
+      const initialStats = {
+        total_reactions: allProfiles.length,
+        reactions_fetched: allProfiles.length,
+        icp_qualified: 0,
+        enriched: 0,
+        failed_enrichments: 0,
+      };
 
       for (let i = 0; i < allProfiles.length; i += BATCH_SIZE) {
         const batch = allProfiles.slice(i, i + BATCH_SIZE);
@@ -147,6 +442,19 @@ export default function LinkedInEnricherPage() {
         const processed = Math.min(i + BATCH_SIZE, allProfiles.length);
         setProgress({ stage: "Filtering by ICP", current: processed, total: allProfiles.length });
 
+        // Save progress after each batch
+        saveProgress({
+          urls,
+          allProfiles,
+          filteredResults: allFilteredResults,
+          results: [],
+          stats: initialStats,
+          stage: "filtering",
+          filterIndex: processed,
+          enrichIndex: 0,
+          savedAt: Date.now(),
+        });
+
         // Small delay between batches
         if (i + BATCH_SIZE < allProfiles.length) {
           await new Promise(resolve => setTimeout(resolve, 100));
@@ -166,17 +474,31 @@ export default function LinkedInEnricherPage() {
         enrichment_status: "PENDING" as const,
       }));
 
-      setStats({
+      const completeStats = {
         total_reactions: allProfiles.length,
         reactions_fetched: allProfiles.length,
         icp_qualified: acceptedLeads.length,
         enriched: 0,
         failed_enrichments: 0,
-      });
+      };
 
+      setStats(completeStats);
       setResults(pendingLeads);
       setProgress(null);
       setStage("complete");
+
+      // Save completed filter state (ready for enrichment)
+      saveProgress({
+        urls,
+        allProfiles,
+        filteredResults: allFilteredResults,
+        results: pendingLeads,
+        stats: completeStats,
+        stage: "complete",
+        filterIndex: allProfiles.length,
+        enrichIndex: 0,
+        savedAt: Date.now(),
+      });
     } catch (err) {
       console.error("[Frontend] Error:", err);
       setError(err instanceof Error ? err.message : "Failed to process LinkedIn post");
@@ -195,9 +517,15 @@ export default function LinkedInEnricherPage() {
     setError(null);
     setProgress({ stage: "Enriching contacts", current: 0, total: results.length });
 
+    // Load saved state for context (urls, allProfiles, filteredResults)
+    const savedContext = loadProgress();
+    const urls = savedContext?.urls || postUrls.split('\n').map(u => u.trim()).filter(u => u);
+    const allProfiles = savedContext?.allProfiles || [];
+    const filteredResults = savedContext?.filteredResults || [];
+
     try {
       const BATCH_SIZE = 5;
-      const enrichedLeads: any[] = [];
+      const enrichedLeads: EnrichedLead[] = [];
       let successCount = 0;
       let failCount = 0;
 
@@ -234,6 +562,33 @@ export default function LinkedInEnricherPage() {
         const processed = Math.min(i + BATCH_SIZE, results.length);
         setProgress({ stage: "Enriching contacts", current: processed, total: results.length });
 
+        // Update results in real-time
+        const currentResults = [...enrichedLeads, ...results.slice(processed)];
+        setResults(currentResults);
+
+        // Update stats in real-time
+        const currentStats = {
+          total_reactions: stats?.total_reactions || results.length,
+          reactions_fetched: stats?.reactions_fetched || results.length,
+          icp_qualified: stats?.icp_qualified || results.length,
+          enriched: successCount,
+          failed_enrichments: failCount,
+        };
+        setStats(currentStats);
+
+        // Save progress after each batch
+        saveProgress({
+          urls,
+          allProfiles,
+          filteredResults,
+          results: currentResults,
+          stats: currentStats,
+          stage: "enriching",
+          filterIndex: allProfiles.length,
+          enrichIndex: processed,
+          savedAt: Date.now(),
+        });
+
         // Small delay between batches
         if (i + BATCH_SIZE < results.length) {
           await new Promise(resolve => setTimeout(resolve, 200));
@@ -242,7 +597,7 @@ export default function LinkedInEnricherPage() {
 
       console.log(`[Frontend] Enrichment complete: ${successCount} successful, ${failCount} failed`);
 
-      // Update stats
+      // Final stats update
       if (stats) {
         setStats({
           ...stats,
@@ -255,6 +610,9 @@ export default function LinkedInEnricherPage() {
       setResults(enrichedLeads);
       setProgress(null);
       setStage("complete");
+
+      // Clear saved state on successful completion
+      clearProgress();
 
       // Auto-download CSV with enriched leads
       const successfulLeads = enrichedLeads.filter(lead => lead.enrichment_status === "SUCCESS");
@@ -308,6 +666,46 @@ export default function LinkedInEnricherPage() {
           Step 1: Extract reactions and filter by ICP • Step 2: Enrich qualified leads with emails
         </p>
       </div>
+
+      {/* Resume Progress Banner */}
+      {savedState && (
+        <Card className="mb-6 border-blue-500 bg-blue-50 dark:bg-blue-950">
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-blue-700 dark:text-blue-300">
+              <RotateCcw className="h-5 w-5" />
+              Resume Previous Progress
+            </CardTitle>
+            <CardDescription className="text-blue-600 dark:text-blue-400">
+              Found saved progress from {new Date(savedState.savedAt).toLocaleString()}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              <div className="text-sm text-blue-700 dark:text-blue-300">
+                <p><strong>Stage:</strong> {savedState.stage === "filtering" ? "ICP Filtering" : savedState.stage === "enriching" ? "Contact Enrichment" : savedState.stage}</p>
+                <p><strong>URLs:</strong> {savedState.urls.length} post(s)</p>
+                <p><strong>Profiles fetched:</strong> {savedState.allProfiles.length}</p>
+                {savedState.stage === "filtering" && (
+                  <p><strong>Filtered:</strong> {savedState.filterIndex} / {savedState.allProfiles.length}</p>
+                )}
+                {savedState.stage === "enriching" && (
+                  <p><strong>Enriched:</strong> {savedState.enrichIndex} / {savedState.results.length}</p>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <Button onClick={handleResume} className="bg-blue-600 hover:bg-blue-700">
+                  <RotateCcw className="mr-2 h-4 w-4" />
+                  Resume Processing
+                </Button>
+                <Button onClick={handleDiscardSaved} variant="outline" className="text-red-600 border-red-300 hover:bg-red-50">
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Discard & Start Fresh
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Input Section */}
       <Card className="mb-6">
