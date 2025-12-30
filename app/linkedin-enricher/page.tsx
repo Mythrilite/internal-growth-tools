@@ -64,9 +64,17 @@ export default function LinkedInEnricherPage() {
           body: JSON.stringify({ post_url: url }),
         }).then(async (response) => {
           if (!response.ok) {
-            const errorData = await response.json();
-            console.error(`Failed to fetch ${url}:`, errorData.error);
-            return { profiles: [], url, error: errorData.error };
+            // Try to parse JSON error, but handle plain text responses
+            const text = await response.text();
+            let errorMessage = `Failed to fetch (${response.status})`;
+            try {
+              const errorData = JSON.parse(text);
+              errorMessage = errorData.error || errorMessage;
+            } catch {
+              errorMessage = text.slice(0, 100) || errorMessage;
+            }
+            console.error(`Failed to fetch ${url}:`, errorMessage);
+            return { profiles: [], url, error: errorMessage };
           }
           const data = await response.json();
           return { profiles: data.profiles, url, error: null };
@@ -119,9 +127,17 @@ export default function LinkedInEnricherPage() {
         });
 
         if (!filterResponse.ok) {
-          const errorData = await filterResponse.json();
-          console.error(`[Frontend] Filter API error:`, errorData);
-          throw new Error(errorData.error || `Failed to filter batch (${filterResponse.status})`);
+          // Try to parse JSON error, but handle plain text responses
+          const text = await filterResponse.text();
+          let errorMessage = `Failed to filter batch (${filterResponse.status})`;
+          try {
+            const errorData = JSON.parse(text);
+            errorMessage = errorData.error || errorMessage;
+          } catch {
+            errorMessage = text.slice(0, 100) || errorMessage;
+          }
+          console.error(`[Frontend] Filter API error:`, errorMessage);
+          throw new Error(errorMessage);
         }
 
         const { results } = await filterResponse.json();
@@ -197,7 +213,16 @@ export default function LinkedInEnricherPage() {
         });
 
         if (!response.ok) {
-          throw new Error("Failed to enrich batch");
+          // Try to parse JSON error, but handle plain text responses
+          const text = await response.text();
+          let errorMessage = `Failed to enrich batch (${response.status})`;
+          try {
+            const errorData = JSON.parse(text);
+            errorMessage = errorData.error || errorMessage;
+          } catch {
+            errorMessage = text.slice(0, 100) || errorMessage;
+          }
+          throw new Error(errorMessage);
         }
 
         const data = await response.json();

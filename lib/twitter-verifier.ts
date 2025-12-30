@@ -146,7 +146,23 @@ Analyze this lead and determine if they meet our criteria.`;
       };
     }
 
-    const result = JSON.parse(content) as FilterResult;
+    // Extract JSON from markdown code blocks if present
+    let jsonContent = content.trim();
+
+    // Remove markdown code blocks if present
+    const jsonMatch = jsonContent.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (jsonMatch) {
+      jsonContent = jsonMatch[1].trim();
+    }
+
+    // Also handle case where LLM adds text before/after JSON
+    const jsonStartIndex = jsonContent.indexOf('{');
+    const jsonEndIndex = jsonContent.lastIndexOf('}');
+    if (jsonStartIndex !== -1 && jsonEndIndex !== -1) {
+      jsonContent = jsonContent.slice(jsonStartIndex, jsonEndIndex + 1);
+    }
+
+    const result = JSON.parse(jsonContent) as FilterResult;
     return result;
   } catch (error) {
     console.error(`Error analyzing lead "${lead.name}":`, error);

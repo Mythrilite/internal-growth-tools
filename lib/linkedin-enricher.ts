@@ -34,30 +34,30 @@ export interface EnrichedLead {
   error?: string;
 }
 
-export const ICP_FILTER_PROMPT = `You are an expert at qualifying B2B software leads from LinkedIn profiles.
+export const ICP_FILTER_PROMPT = `You are an expert at qualifying B2B software leads from LinkedIn profiles. Be INCLUSIVE - when in doubt, ACCEPT.
 
-CRITERIA FOR ACCEPTANCE:
-✅ Technical role (Engineer, Engineering Manager, Director of Engineering, VP Engineering, CTO, Founder, Head of Engineering, Staff Engineer, Principal Engineer, Senior Engineer)
-✅ Mid-level+ seniority OR leadership role
-✅ Software/tech company (20-2000 engineers estimated)
-✅ US-based (if location mentioned in headline)
-✅ Mid-sized tech companies (startups, scale-ups, growth-stage companies)
+CRITERIA FOR ACCEPTANCE (meet ANY of these):
+✅ Works at a tech/software company (any size from startup to mid-market)
+✅ Technical role: Engineer, Developer, Architect, Data Scientist, ML/AI, DevOps, SRE, etc.
+✅ Technical leadership: Engineering Manager, Director, VP, CTO, Head of Engineering
+✅ Product roles: Product Manager, Product Owner, Head of Product, CPO
+✅ Founder, Co-founder, CEO, COO of a tech company
+✅ Works at a startup or scale-up (any stage)
+✅ Mentions tech keywords: SaaS, API, cloud, infrastructure, platform, developer tools, etc.
 
-REJECT IF:
-❌ Student, intern, freelancer, recruiter, HR roles
-❌ Non-tech company (retail, hospitality, traditional services)
-❌ Junior roles unless at promising startup
-❌ Consultant, agency worker (unless at major consultancy)
-❌ Insufficient information to determine
-❌ VERY LARGE COMPANIES (CRITICAL): Meta/Facebook, Google, Amazon, Apple, Microsoft, Netflix, Oracle, IBM, Salesforce, Adobe, Intel, Cisco, Dell, HP, SAP, Workday, ServiceNow, or any company with 2000+ employees
-❌ Public companies with massive scale (unicorns worth $10B+, publicly traded tech giants)
+ONLY REJECT IF (must be CLEARLY one of these):
+❌ Student or intern (explicit in headline)
+❌ Recruiter, HR, Talent Acquisition (explicit in headline)
+❌ Clearly non-tech company (restaurant, retail store, real estate agent, etc.)
+❌ VERY LARGE COMPANIES: Meta/Facebook, Google, Amazon, Apple, Microsoft, Netflix, or any company with 5000+ employees
 
-IMPORTANT:
-- Make reasonable inferences based on headline and company
-- Focus on technical roles at growth-stage companies (Series A-D, 20-2000 employees)
-- EXCLUDE people from mega-corporations and enterprise giants
-- Target: startups, scale-ups, and mid-market tech companies
-- Company size estimate based on company name recognition and industry
+IMPORTANT - BE LENIENT:
+- If unclear, ACCEPT - we can filter later
+- Accept junior roles at tech companies
+- Accept consultants and freelancers if they work in tech
+- Accept people at larger companies (up to 5000 employees) if they have decision-making roles
+- Don't reject just because information is limited - accept if they seem tech-related
+- We want MORE leads, not fewer
 
 RESPONSE FORMAT (JSON):
 {
@@ -68,7 +68,7 @@ RESPONSE FORMAT (JSON):
     "company": "Company name if mentioned",
     "role": "Their role title",
     "seniority_level": "Junior/Mid/Senior/Leadership",
-    "estimated_company_size": "Your estimate (e.g., 20-50, 50-200, 200-500, 500-2000)"
+    "estimated_company_size": "Your estimate"
   }
 }`;
 
@@ -222,7 +222,23 @@ Analyze this LinkedIn profile and determine if they meet our ICP criteria.`;
       };
     }
 
-    const result = JSON.parse(content) as ICPFilterResult;
+    // Extract JSON from markdown code blocks if present
+    let jsonContent = content.trim();
+
+    // Remove markdown code blocks if present
+    const jsonMatch = jsonContent.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (jsonMatch) {
+      jsonContent = jsonMatch[1].trim();
+    }
+
+    // Also handle case where LLM adds text before/after JSON
+    const jsonStartIndex = jsonContent.indexOf('{');
+    const jsonEndIndex = jsonContent.lastIndexOf('}');
+    if (jsonStartIndex !== -1 && jsonEndIndex !== -1) {
+      jsonContent = jsonContent.slice(jsonStartIndex, jsonEndIndex + 1);
+    }
+
+    const result = JSON.parse(jsonContent) as ICPFilterResult;
     console.log(`[filterByICP] Result for ${profile.name}: ${result.decision} (${result.confidence})`);
     return result;
   } catch (error) {
