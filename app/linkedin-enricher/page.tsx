@@ -137,41 +137,56 @@ export default function LinkedInEnricherPage() {
   // Resume filtering from saved state
   const resumeFiltering = async (saved: SavedState) => {
     const BATCH_SIZE = 20;
+    const PARALLEL_BATCHES = 5;
     const allProfiles = saved.allProfiles;
     const allFilteredResults = [...saved.filteredResults];
-    let startIndex = saved.filterIndex;
+    const startIndex = saved.filterIndex;
 
     setProgress({ stage: "Filtering by ICP (resumed)", current: startIndex, total: allProfiles.length });
 
     try {
-      for (let i = startIndex; i < allProfiles.length; i += BATCH_SIZE) {
-        const batch = allProfiles.slice(i, i + BATCH_SIZE);
+      // Create remaining batches from where we left off
+      const remainingProfiles = allProfiles.slice(startIndex);
+      const batches: LinkedInProfile[][] = [];
+      for (let i = 0; i < remainingProfiles.length; i += BATCH_SIZE) {
+        batches.push(remainingProfiles.slice(i, i + BATCH_SIZE));
+      }
 
-        const filterResponse = await fetch("/api/linkedin-enricher/filter", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ profiles: batch }),
+      // Process batches in parallel groups
+      for (let i = 0; i < batches.length; i += PARALLEL_BATCHES) {
+        const parallelBatches = batches.slice(i, i + PARALLEL_BATCHES);
+
+        const batchPromises = parallelBatches.map(async (batch) => {
+          const filterResponse = await fetch("/api/linkedin-enricher/filter", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ profiles: batch }),
+          });
+
+          if (!filterResponse.ok) {
+            const text = await filterResponse.text();
+            let errorMessage = `Failed to filter batch (${filterResponse.status})`;
+            try {
+              const errorData = JSON.parse(text);
+              errorMessage = errorData.error || errorMessage;
+            } catch {
+              errorMessage = text.slice(0, 100) || errorMessage;
+            }
+            throw new Error(errorMessage);
+          }
+
+          const { results } = await filterResponse.json();
+          return results;
         });
 
-        if (!filterResponse.ok) {
-          const text = await filterResponse.text();
-          let errorMessage = `Failed to filter batch (${filterResponse.status})`;
-          try {
-            const errorData = JSON.parse(text);
-            errorMessage = errorData.error || errorMessage;
-          } catch {
-            errorMessage = text.slice(0, 100) || errorMessage;
-          }
-          throw new Error(errorMessage);
-        }
+        const batchResults = await Promise.all(batchPromises);
+        batchResults.forEach(results => allFilteredResults.push(...results));
 
-        const { results } = await filterResponse.json();
-        allFilteredResults.push(...results);
-
-        const processed = Math.min(i + BATCH_SIZE, allProfiles.length);
+        const processedBatches = Math.min(i + PARALLEL_BATCHES, batches.length);
+        const processed = startIndex + Math.min(processedBatches * BATCH_SIZE, remainingProfiles.length);
         setProgress({ stage: "Filtering by ICP (resumed)", current: processed, total: allProfiles.length });
 
-        // Save progress after each batch
+        // Save progress after each parallel group
         saveProgress({
           ...saved,
           filteredResults: allFilteredResults,
@@ -179,7 +194,7 @@ export default function LinkedInEnricherPage() {
           savedAt: Date.now(),
         });
 
-        if (i + BATCH_SIZE < allProfiles.length) {
+        if (i + PARALLEL_BATCHES < batches.length) {
           await new Promise(resolve => setTimeout(resolve, 100));
         }
       }
@@ -225,9 +240,10 @@ export default function LinkedInEnricherPage() {
   // Resume enriching from saved state
   const resumeEnriching = async (saved: SavedState) => {
     const BATCH_SIZE = 5;
+    const PARALLEL_BATCHES = 4;
     const leadsToEnrich = saved.results;
     const enrichedLeads: EnrichedLead[] = [];
-    let startIndex = saved.enrichIndex;
+    const startIndex = saved.enrichIndex;
     let successCount = saved.stats.enriched;
     let failCount = saved.stats.failed_enrichments;
 
@@ -239,37 +255,56 @@ export default function LinkedInEnricherPage() {
     setProgress({ stage: "Enriching contacts (resumed)", current: startIndex, total: leadsToEnrich.length });
 
     try {
-      for (let i = startIndex; i < leadsToEnrich.length; i += BATCH_SIZE) {
-        const batch = leadsToEnrich.slice(i, i + BATCH_SIZE);
+      // Create remaining batches from where we left off
+      const remainingLeads = leadsToEnrich.slice(startIndex);
+      const batches: EnrichedLead[][] = [];
+      for (let i = 0; i < remainingLeads.length; i += BATCH_SIZE) {
+        batches.push(remainingLeads.slice(i, i + BATCH_SIZE));
+      }
 
-        const response = await fetch("/api/linkedin-enricher", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ leads: batch }),
+      // Process batches in parallel groups
+      for (let i = 0; i < batches.length; i += PARALLEL_BATCHES) {
+        const parallelBatches = batches.slice(i, i + PARALLEL_BATCHES);
+
+        const batchPromises = parallelBatches.map(async (batch) => {
+          const response = await fetch("/api/linkedin-enricher", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ leads: batch }),
+          });
+
+          if (!response.ok) {
+            const text = await response.text();
+            let errorMessage = `Failed to enrich batch (${response.status})`;
+            try {
+              const errorData = JSON.parse(text);
+              errorMessage = errorData.error || errorMessage;
+            } catch {
+              errorMessage = text.slice(0, 100) || errorMessage;
+            }
+            throw new Error(errorMessage);
+          }
+
+          const data = await response.json();
+          return data;
         });
 
-        if (!response.ok) {
-          const text = await response.text();
-          let errorMessage = `Failed to enrich batch (${response.status})`;
-          try {
-            const errorData = JSON.parse(text);
-            errorMessage = errorData.error || errorMessage;
-          } catch {
-            errorMessage = text.slice(0, 100) || errorMessage;
-          }
-          throw new Error(errorMessage);
-        }
+        const batchResults = await Promise.all(batchPromises);
 
-        const data = await response.json();
-        enrichedLeads.push(...data.results);
-        successCount += data.enriched;
-        failCount += data.failed_enrichments;
+        // Aggregate results from parallel batches
+        batchResults.forEach(data => {
+          enrichedLeads.push(...data.results);
+          successCount += data.enriched;
+          failCount += data.failed_enrichments;
+        });
 
-        const processed = Math.min(i + BATCH_SIZE, leadsToEnrich.length);
+        const processedBatches = Math.min(i + PARALLEL_BATCHES, batches.length);
+        const processed = startIndex + Math.min(processedBatches * BATCH_SIZE, remainingLeads.length);
         setProgress({ stage: "Enriching contacts (resumed)", current: processed, total: leadsToEnrich.length });
 
         // Update results and stats in real-time
-        setResults([...enrichedLeads, ...leadsToEnrich.slice(processed)]);
+        const currentResults = [...enrichedLeads, ...leadsToEnrich.slice(processed)];
+        setResults(currentResults);
         const currentStats = {
           ...saved.stats,
           enriched: successCount,
@@ -277,16 +312,16 @@ export default function LinkedInEnricherPage() {
         };
         setStats(currentStats);
 
-        // Save progress after each batch
+        // Save progress after each parallel group
         saveProgress({
           ...saved,
-          results: [...enrichedLeads, ...leadsToEnrich.slice(processed)],
+          results: currentResults,
           stats: currentStats,
           enrichIndex: processed,
           savedAt: Date.now(),
         });
 
-        if (i + BATCH_SIZE < leadsToEnrich.length) {
+        if (i + PARALLEL_BATCHES < batches.length) {
           await new Promise(resolve => setTimeout(resolve, 200));
         }
       }
@@ -399,6 +434,7 @@ export default function LinkedInEnricherPage() {
       setProgress({ stage: "Filtering by ICP", current: 0, total: allProfiles.length });
 
       const BATCH_SIZE = 20;
+      const PARALLEL_BATCHES = 5; // Run 5 batches in parallel = 100 profiles at once
       const allFilteredResults: Array<{ profile: LinkedInProfile; icp_result: ICPFilterResult }> = [];
 
       // Initialize stats for saving progress
@@ -410,39 +446,51 @@ export default function LinkedInEnricherPage() {
         failed_enrichments: 0,
       };
 
+      // Create all batches
+      const batches: LinkedInProfile[][] = [];
       for (let i = 0; i < allProfiles.length; i += BATCH_SIZE) {
-        const batch = allProfiles.slice(i, i + BATCH_SIZE);
+        batches.push(allProfiles.slice(i, i + BATCH_SIZE));
+      }
 
-        const filterResponse = await fetch("/api/linkedin-enricher/filter", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ profiles: batch }),
+      // Process batches in parallel groups
+      for (let i = 0; i < batches.length; i += PARALLEL_BATCHES) {
+        const parallelBatches = batches.slice(i, i + PARALLEL_BATCHES);
+
+        // Run multiple batches in parallel
+        const batchPromises = parallelBatches.map(async (batch) => {
+          const filterResponse = await fetch("/api/linkedin-enricher/filter", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ profiles: batch }),
+          });
+
+          if (!filterResponse.ok) {
+            const text = await filterResponse.text();
+            let errorMessage = `Failed to filter batch (${filterResponse.status})`;
+            try {
+              const errorData = JSON.parse(text);
+              errorMessage = errorData.error || errorMessage;
+            } catch {
+              errorMessage = text.slice(0, 100) || errorMessage;
+            }
+            throw new Error(errorMessage);
+          }
+
+          const { results } = await filterResponse.json();
+          return results;
         });
 
-        if (!filterResponse.ok) {
-          // Try to parse JSON error, but handle plain text responses
-          const text = await filterResponse.text();
-          let errorMessage = `Failed to filter batch (${filterResponse.status})`;
-          try {
-            const errorData = JSON.parse(text);
-            errorMessage = errorData.error || errorMessage;
-          } catch {
-            errorMessage = text.slice(0, 100) || errorMessage;
-          }
-          console.error(`[Frontend] Filter API error:`, errorMessage);
-          throw new Error(errorMessage);
-        }
-
-        const { results } = await filterResponse.json();
-        allFilteredResults.push(...results);
+        const batchResults = await Promise.all(batchPromises);
+        batchResults.forEach(results => allFilteredResults.push(...results));
 
         // Update progress
-        const processed = Math.min(i + BATCH_SIZE, allProfiles.length);
-        setProgress({ stage: "Filtering by ICP", current: processed, total: allProfiles.length });
+        const processedBatches = Math.min(i + PARALLEL_BATCHES, batches.length);
+        const processedProfiles = Math.min(processedBatches * BATCH_SIZE, allProfiles.length);
+        setProgress({ stage: "Filtering by ICP", current: processedProfiles, total: allProfiles.length });
 
-        // Save progress after each batch
+        // Save progress after each parallel group
         saveProgress({
           urls,
           allProfiles,
@@ -450,13 +498,13 @@ export default function LinkedInEnricherPage() {
           results: [],
           stats: initialStats,
           stage: "filtering",
-          filterIndex: processed,
+          filterIndex: processedProfiles,
           enrichIndex: 0,
           savedAt: Date.now(),
         });
 
-        // Small delay between batches
-        if (i + BATCH_SIZE < allProfiles.length) {
+        // Small delay between parallel groups
+        if (i + PARALLEL_BATCHES < batches.length) {
           await new Promise(resolve => setTimeout(resolve, 100));
         }
       }
@@ -525,41 +573,59 @@ export default function LinkedInEnricherPage() {
 
     try {
       const BATCH_SIZE = 5;
+      const PARALLEL_BATCHES = 4; // Run 4 batches in parallel = 20 leads at once
       const enrichedLeads: EnrichedLead[] = [];
       let successCount = 0;
       let failCount = 0;
 
+      // Create all batches
+      const batches: EnrichedLead[][] = [];
       for (let i = 0; i < results.length; i += BATCH_SIZE) {
-        const batch = results.slice(i, i + BATCH_SIZE);
+        batches.push(results.slice(i, i + BATCH_SIZE));
+      }
 
-        const response = await fetch("/api/linkedin-enricher", {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ leads: batch }),
+      // Process batches in parallel groups
+      for (let i = 0; i < batches.length; i += PARALLEL_BATCHES) {
+        const parallelBatches = batches.slice(i, i + PARALLEL_BATCHES);
+
+        // Run multiple batches in parallel
+        const batchPromises = parallelBatches.map(async (batch) => {
+          const response = await fetch("/api/linkedin-enricher", {
+            method: "PATCH",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ leads: batch }),
+          });
+
+          if (!response.ok) {
+            const text = await response.text();
+            let errorMessage = `Failed to enrich batch (${response.status})`;
+            try {
+              const errorData = JSON.parse(text);
+              errorMessage = errorData.error || errorMessage;
+            } catch {
+              errorMessage = text.slice(0, 100) || errorMessage;
+            }
+            throw new Error(errorMessage);
+          }
+
+          const data = await response.json();
+          return data;
         });
 
-        if (!response.ok) {
-          // Try to parse JSON error, but handle plain text responses
-          const text = await response.text();
-          let errorMessage = `Failed to enrich batch (${response.status})`;
-          try {
-            const errorData = JSON.parse(text);
-            errorMessage = errorData.error || errorMessage;
-          } catch {
-            errorMessage = text.slice(0, 100) || errorMessage;
-          }
-          throw new Error(errorMessage);
-        }
+        const batchResults = await Promise.all(batchPromises);
 
-        const data = await response.json();
-        enrichedLeads.push(...data.results);
-        successCount += data.enriched;
-        failCount += data.failed_enrichments;
+        // Aggregate results from parallel batches
+        batchResults.forEach(data => {
+          enrichedLeads.push(...data.results);
+          successCount += data.enriched;
+          failCount += data.failed_enrichments;
+        });
 
         // Update progress
-        const processed = Math.min(i + BATCH_SIZE, results.length);
+        const processedBatches = Math.min(i + PARALLEL_BATCHES, batches.length);
+        const processed = Math.min(processedBatches * BATCH_SIZE, results.length);
         setProgress({ stage: "Enriching contacts", current: processed, total: results.length });
 
         // Update results in real-time
@@ -576,7 +642,7 @@ export default function LinkedInEnricherPage() {
         };
         setStats(currentStats);
 
-        // Save progress after each batch
+        // Save progress after each parallel group
         saveProgress({
           urls,
           allProfiles,
@@ -589,8 +655,8 @@ export default function LinkedInEnricherPage() {
           savedAt: Date.now(),
         });
 
-        // Small delay between batches
-        if (i + BATCH_SIZE < results.length) {
+        // Small delay between parallel groups
+        if (i + PARALLEL_BATCHES < batches.length) {
           await new Promise(resolve => setTimeout(resolve, 200));
         }
       }
