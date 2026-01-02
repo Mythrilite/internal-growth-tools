@@ -1,6 +1,29 @@
 import { NextRequest, NextResponse } from "next/server";
 import { filterByICP, type LinkedInProfile, type ICPFilterResult } from "@/lib/linkedin-enricher";
 
+// Process profiles in batches to avoid timeout
+const BATCH_SIZE = 5; // Process 5 profiles concurrently
+
+async function processBatch(
+  profiles: LinkedInProfile[],
+  openRouterKey: string
+): Promise<{ profile: LinkedInProfile; icp_result: ICPFilterResult }[]> {
+  const results = await Promise.allSettled(
+    profiles.map(async (profile) => {
+      const icp_result = await filterByICP(profile, openRouterKey);
+      return { profile, icp_result };
+    })
+  );
+
+  return results
+    .filter((r): r is PromiseFulfilledResult<{ profile: LinkedInProfile; icp_result: ICPFilterResult }> =>
+      r.status === "fulfilled"
+    )
+    .map(r => r.value);
+}
+
+export const maxDuration = 60; // Set max duration to 60 seconds (requires Vercel Pro)
+
 export async function POST(request: NextRequest) {
   try {
     const openRouterKey = process.env.OPENROUTER_API_KEY;
@@ -34,30 +57,28 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log(`[Filter] Filtering ${profiles.length} profiles`);
+    console.log(`[Filter] Filtering ${profiles.length} profiles in batches of ${BATCH_SIZE}`);
 
-    // Process all profiles in parallel
-    const results = await Promise.allSettled(
-      profiles.map(async (profile: LinkedInProfile) => {
-        const icp_result = await filterByICP(profile, openRouterKey);
-        return { profile, icp_result };
-      })
-    );
+    // Process profiles in batches to avoid timeout
+    const allResults: { profile: LinkedInProfile; icp_result: ICPFilterResult }[] = [];
 
-    // Extract successful results and log failures
-    const filteredResults = results
-      .filter((r): r is PromiseFulfilledResult<{ profile: LinkedInProfile; icp_result: ICPFilterResult }> => r.status === "fulfilled")
-      .map(r => r.value);
+    for (let i = 0; i < profiles.length; i += BATCH_SIZE) {
+      const batch = profiles.slice(i, i + BATCH_SIZE);
+      const batchNum = Math.floor(i / BATCH_SIZE) + 1;
+      const totalBatches = Math.ceil(profiles.length / BATCH_SIZE);
 
-    const failedResults = results.filter(r => r.status === "rejected");
-    if (failedResults.length > 0) {
-      console.error(`[Filter] ${failedResults.length} profiles failed to filter`);
+      console.log(`[Filter] Processing batch ${batchNum}/${totalBatches} (${batch.length} profiles)`);
+
+      const batchResults = await processBatch(batch, openRouterKey);
+      allResults.push(...batchResults);
+
+      console.log(`[Filter] Batch ${batchNum} complete. Total processed: ${allResults.length}/${profiles.length}`);
     }
 
-    console.log(`[Filter] Filtered ${filteredResults.length}/${profiles.length} profiles successfully`);
+    console.log(`[Filter] Filtered ${allResults.length}/${profiles.length} profiles successfully`);
 
     return NextResponse.json({
-      results: filteredResults,
+      results: allResults,
     });
   } catch (error) {
     console.error("[Filter] Unexpected error:", error);
