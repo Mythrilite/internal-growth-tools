@@ -9,7 +9,7 @@ const robotoMono = Roboto_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Internal Growth Tools",
+  title: "Mythrilite Internal Tools",
   description: "Lead generation and enrichment tools for growth teams",
 };
 
