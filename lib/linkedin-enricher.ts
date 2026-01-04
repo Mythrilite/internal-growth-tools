@@ -4,6 +4,7 @@ export interface LinkedInProfile {
   linkedin_url: string;
   reaction_type?: string;
   timestamp?: string;
+  company?: string; // Extracted from headline
 }
 
 export interface ICPFilterResult {
@@ -72,6 +73,131 @@ RESPONSE FORMAT (JSON):
   }
 }`;
 
+/**
+ * Extracts company name from a LinkedIn headline.
+ *
+ * Common patterns:
+ * - "Role at Company" -> Company
+ * - "Role @ Company" -> Company
+ * - "Role | Company" -> Company
+ * - "Role, Company" -> Company
+ * - "Company - Role" -> Company
+ * - "Founder of Company" -> Company
+ *
+ * @param headline The LinkedIn headline string
+ * @returns The extracted company name, or undefined if not found
+ */
+export function extractCompanyFromHeadline(headline: string): string | undefined {
+  if (!headline || headline.trim() === "") {
+    return undefined;
+  }
+
+  // Normalize the headline
+  const normalizedHeadline = headline.trim();
+
+  // Pattern 1: "Role at Company" (case insensitive)
+  // Examples: "Software Engineer at Stripe", "CEO at TechStartup"
+  const atMatch = normalizedHeadline.match(/\bat\s+(.+?)(?:\s*[|,]|$)/i);
+  if (atMatch && atMatch[1]) {
+    const company = atMatch[1].trim();
+    // Avoid returning if it's just a location like "at San Francisco"
+    if (company.length > 1 && !company.match(/^(the|a|an)$/i)) {
+      return cleanCompanyName(company);
+    }
+  }
+
+  // Pattern 2: "Role @ Company"
+  // Examples: "CEO @ TechStartup", "Founder @ MyCompany"
+  const atSymbolMatch = normalizedHeadline.match(/@\s*(.+?)(?:\s*[|,]|$)/);
+  if (atSymbolMatch && atSymbolMatch[1]) {
+    return cleanCompanyName(atSymbolMatch[1].trim());
+  }
+
+  // Pattern 3: "Role | Company" or "Company | Role"
+  // Examples: "Founder | MyCompany", "Stripe | Engineering Manager"
+  const pipeMatch = normalizedHeadline.match(/\|\s*(.+?)(?:\s*[|,]|$)/);
+  if (pipeMatch && pipeMatch[1]) {
+    const afterPipe = pipeMatch[1].trim();
+    // Check if it looks like a company (not a role)
+    if (!isLikelyRole(afterPipe)) {
+      return cleanCompanyName(afterPipe);
+    }
+    // Try the part before the pipe
+    const beforePipe = normalizedHeadline.split('|')[0].trim();
+    if (!isLikelyRole(beforePipe)) {
+      return cleanCompanyName(beforePipe);
+    }
+  }
+
+  // Pattern 4: "Company - Role" or "Role - Company"
+  // Examples: "Google - Software Engineer", "Software Engineer - Stripe"
+  const dashMatch = normalizedHeadline.match(/^(.+?)\s*[-–—]\s*(.+?)$/);
+  if (dashMatch) {
+    const part1 = dashMatch[1].trim();
+    const part2 = dashMatch[2].trim();
+    // Usually the company is the shorter part or the one that doesn't look like a role
+    if (!isLikelyRole(part1) && isLikelyRole(part2)) {
+      return cleanCompanyName(part1);
+    }
+    if (!isLikelyRole(part2) && isLikelyRole(part1)) {
+      return cleanCompanyName(part2);
+    }
+  }
+
+  // Pattern 5: "Role, Company"
+  // Examples: "Software Engineer, Stripe", "CEO, TechStartup"
+  const commaMatch = normalizedHeadline.match(/,\s*(.+?)(?:\s*[|]|$)/);
+  if (commaMatch && commaMatch[1]) {
+    const afterComma = commaMatch[1].trim();
+    // Avoid locations
+    if (!isLikelyLocation(afterComma) && !isLikelyRole(afterComma)) {
+      return cleanCompanyName(afterComma);
+    }
+  }
+
+  // Pattern 6: "Founder/Co-founder of Company"
+  // Examples: "Founder of TechStartup", "Co-founder of MyCompany"
+  const founderMatch = normalizedHeadline.match(/(?:founder|co-founder|cofounder)\s+(?:of|&|and)\s+(.+?)(?:\s*[|,]|$)/i);
+  if (founderMatch && founderMatch[1]) {
+    return cleanCompanyName(founderMatch[1].trim());
+  }
+
+  return undefined;
+}
+
+/**
+ * Cleans up a company name by removing common suffixes and extra whitespace
+ */
+function cleanCompanyName(company: string): string {
+  return company
+    // Remove common suffixes
+    .replace(/\s*(Inc\.?|LLC|Ltd\.?|Corp\.?|Corporation|Co\.?)$/i, "")
+    // Remove extra whitespace
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Checks if a string looks like a job role rather than a company name
+ */
+function isLikelyRole(text: string): boolean {
+  const roleKeywords = [
+    /\b(engineer|developer|architect|manager|director|vp|vice president|head|lead|senior|junior|principal|staff|ceo|cto|coo|cfo|cmo|founder|co-founder|cofounder|president|owner|consultant|analyst|designer|scientist|specialist|coordinator|associate|intern|executive|officer)\b/i,
+  ];
+  return roleKeywords.some((pattern) => pattern.test(text));
+}
+
+/**
+ * Checks if a string looks like a location
+ */
+function isLikelyLocation(text: string): boolean {
+  const locationKeywords = [
+    /\b(san francisco|new york|los angeles|chicago|boston|seattle|austin|denver|london|berlin|paris|tokyo|singapore|remote|usa|uk|us|ca|ny|sf|la)\b/i,
+    /\b(california|texas|florida|washington|massachusetts|colorado|georgia|virginia|illinois|pennsylvania)\b/i,
+  ];
+  return locationKeywords.some((pattern) => pattern.test(text));
+}
+
 export function validateLinkedInPostUrl(url: string): boolean {
   // LinkedIn post URLs follow patterns like:
   // https://www.linkedin.com/posts/username_activity-1234567890
@@ -115,20 +241,24 @@ export async function fetchPostReactions(
     const data = await response.json();
     console.log(`[fetchPostReactions] Page ${currentPage} data:`, JSON.stringify(data, null, 2));
 
-    // The actual structure is data.data.data.items (nested data objects)
+    // Actual structure: data.data.items[]
     const items = data.data?.data?.items || [];
 
     if (items.length > 0) {
-      const reactions = items.map((item: any) => ({
-        name: item.fullName || "",
-        headline: item.headline || "",
-        linkedin_url: item.profileUrl || "",
-        reaction_type: item.reactionType || "",
-        timestamp: item.timestamp || "",
-      }));
+      const mappedReactions = items.map((item: any) => {
+        const headline = item.headline || "";
+        return {
+          name: item.fullName || "",
+          headline,
+          linkedin_url: item.profileUrl || "",
+          reaction_type: item.reactionType || "",
+          timestamp: item.timestamp || "",
+          company: extractCompanyFromHeadline(headline),
+        };
+      });
 
-      console.log(`[fetchPostReactions] Page ${currentPage} added ${reactions.length} reactions`);
-      allReactions.push(...reactions);
+      console.log(`[fetchPostReactions] Page ${currentPage} added ${mappedReactions.length} reactions`);
+      allReactions.push(...mappedReactions);
     }
 
     // Check if there are more pages
@@ -256,9 +386,18 @@ export async function enrichContact(
   apiKey: string
 ): Promise<ContactData> {
   console.log("[enrichContact] Enriching:", linkedinUrl);
+  console.log("[enrichContact] API key (first 10 chars):", apiKey?.substring(0, 10) + "...");
+
   try {
-    const url = `https://search.clado.ai/api/enrich/contacts?linkedin_url=${encodeURIComponent(linkedinUrl)}&email_enrichment=true`;
-    console.log("[enrichContact] Fetching:", url);
+    // Ensure LinkedIn URL is properly formatted
+    let formattedUrl = linkedinUrl;
+    if (!linkedinUrl.startsWith("http")) {
+      formattedUrl = `https://www.linkedin.com${linkedinUrl.startsWith("/") ? "" : "/"}${linkedinUrl}`;
+      console.log("[enrichContact] Formatted URL:", formattedUrl);
+    }
+
+    const url = `https://search.clado.ai/api/enrich/contacts?linkedin_url=${formattedUrl}&email_enrichment=true`;
+    console.log("[enrichContact] Full API URL:", url);
 
     const response = await fetch(url, {
       headers: {
@@ -274,16 +413,33 @@ export async function enrichContact(
       throw new Error(`Clado API error: ${response.status} - ${errorText}`);
     }
 
-    const data = await response.json();
-    console.log("[enrichContact] Response data:", JSON.stringify(data, null, 2));
+    const rawText = await response.text();
+    console.log("[enrichContact] Raw response:", rawText);
+
+    const data = JSON.parse(rawText);
+    console.log("[enrichContact] Parsed data:", JSON.stringify(data, null, 2));
+    console.log("[enrichContact] LinkedIn URL passed:", formattedUrl);
 
     if (data.data?.[0]?.error) {
-      console.error("[enrichContact] Enrichment returned error flag");
-      throw new Error("Contact enrichment failed");
+      console.error("[enrichContact] Enrichment returned error flag for URL:", formattedUrl);
+      throw new Error(`Contact enrichment failed for ${formattedUrl}`);
     }
 
-    const contacts = data.data?.[0]?.contacts || [];
+    // DEBUG: Log the full response structure to understand what Clado returns
+    console.log("[enrichContact] Full API response structure:", JSON.stringify(data, null, 2));
+
+    const contacts = data.data?.[0]?.contacts || data.contacts || data.data?.contacts || [];
     console.log(`[enrichContact] Found ${contacts.length} contacts`);
+
+    // If no contacts found, try alternative paths
+    if (contacts.length === 0) {
+      console.log("[enrichContact] No contacts found. Checking alternative response paths...");
+      console.log("[enrichContact] data.data:", JSON.stringify(data.data, null, 2));
+      console.log("[enrichContact] Keys in response:", Object.keys(data));
+      if (data.data) {
+        console.log("[enrichContact] Keys in data.data:", Object.keys(data.data));
+      }
+    }
 
     // Find all emails
     const emails = contacts.filter((c: any) => c.type === "email");
@@ -303,36 +459,28 @@ export async function enrichContact(
       return personalDomains.includes(domain);
     };
 
-    // Prioritize email selection based on Clado's subTypes:
-    // - "verified": Work emails (corporate domains) - HIGHEST PRIORITY
-    // - "work": Work emails (if exists)
-    // - "professional": Professional emails
-    // - "risky": Personal/unverified emails - EXCLUDE
-    // IMPORTANT: Completely exclude personal email domains (Gmail, Yahoo, etc.)
-
-    // Filter out personal domains and categorize by subType
+    // Include verified, work, and risky emails - exclude personal domains
     const verifiedEmails = emails.filter((c: any) => c.subType === "verified" && !isPersonalEmail(c.value));
     const workEmails = emails.filter((c: any) => c.subType === "work" && !isPersonalEmail(c.value));
-    const professionalEmails = emails.filter((c: any) => c.subType === "professional" && !isPersonalEmail(c.value));
+    const riskyEmails = emails.filter((c: any) => c.subType === "risky" && !isPersonalEmail(c.value));
 
-    console.log(`[enrichContact] After filtering personal domains: ${verifiedEmails.length} verified, ${workEmails.length} work, ${professionalEmails.length} professional`);
+    console.log(`[enrichContact] After filtering: ${verifiedEmails.length} verified, ${workEmails.length} work, ${riskyEmails.length} risky`);
 
-    // Combine and sort by priority, then by rating
-    // ONLY include verified, work, and professional emails (NO risky/personal)
+    // Combine all work-related emails (verified first, then work, then risky)
     const prioritizedEmails = [
       ...verifiedEmails,
       ...workEmails,
-      ...professionalEmails,
+      ...riskyEmails,
     ];
 
-    // Sort by rating (descending) within the prioritized list
+    // Sort by rating (descending)
     prioritizedEmails.sort((a: any, b: any) => (b.rating || 0) - (a.rating || 0));
 
     // Choose best email
     const selectedEmail = prioritizedEmails[0] || null;
 
     if (!selectedEmail) {
-      console.log("[enrichContact] No work email found (excluded all personal domains: Gmail, Yahoo, Outlook, etc.)");
+      console.log("[enrichContact] No work email found (only accepting verified/work subTypes, excluding personal domains)");
     } else {
       console.log(`[enrichContact] Selected email: ${selectedEmail.value} (${selectedEmail.subType}, rating: ${selectedEmail.rating})`);
     }
@@ -361,6 +509,7 @@ export function convertToCSV(leads: EnrichedLead[]): string {
     "headline",
     "linkedin_url",
     "reaction_type",
+    "company",
     "email",
     "email_rating",
     "email_type",
@@ -386,6 +535,8 @@ export function convertToCSV(leads: EnrichedLead[]): string {
           return lead.profile.linkedin_url;
         case "reaction_type":
           return lead.profile.reaction_type || "";
+        case "company":
+          return lead.profile.company || "";
         case "email":
           return lead.contact.email || "";
         case "email_rating":
