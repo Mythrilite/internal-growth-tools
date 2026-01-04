@@ -717,6 +717,50 @@ export default function LinkedInEnricherPage() {
     window.URL.revokeObjectURL(url);
   };
 
+  const downloadFilteredCSV = () => {
+    // Export filtered leads (before enrichment) - just the basic profile + ICP info
+    if (results.length === 0) return;
+
+    const headers = [
+      "name",
+      "headline",
+      "linkedin_url",
+      "reaction_type",
+      "icp_decision",
+      "icp_reasoning",
+      "icp_confidence",
+      "extracted_company",
+      "extracted_role",
+      "extracted_seniority",
+      "estimated_company_size",
+    ];
+
+    const rows = results.map((lead) => {
+      return [
+        lead.profile.name,
+        `"${lead.profile.headline.replace(/"/g, '""')}"`,
+        lead.profile.linkedin_url,
+        lead.profile.reaction_type || "",
+        lead.icp_result.decision,
+        `"${lead.icp_result.reasoning.replace(/"/g, '""')}"`,
+        lead.icp_result.confidence,
+        lead.icp_result.extracted_info?.company || "",
+        lead.icp_result.extracted_info?.role || "",
+        lead.icp_result.extracted_info?.seniority_level || "",
+        lead.icp_result.extracted_info?.estimated_company_size || "",
+      ].join(",");
+    });
+
+    const csv = [headers.join(","), ...rows].join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `linkedin_filtered_leads_${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    window.URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="container mx-auto py-8 px-4 max-w-6xl">
       <Link href="/">
@@ -940,6 +984,13 @@ https://www.linkedin.com/posts/username3_activity-555555555"
                 </CardDescription>
               </div>
               <div className="flex gap-2">
+                {/* Show download filtered list button if leads are pending */}
+                {results.some(r => r.enrichment_status === "PENDING") && !enriching && (
+                  <Button onClick={downloadFilteredCSV} variant="outline" size="sm">
+                    <Download className="mr-2 h-4 w-4" />
+                    Download Filtered List ({results.length})
+                  </Button>
+                )}
                 {/* Show Enrich button if leads are pending */}
                 {results.some(r => r.enrichment_status === "PENDING") && !enriching && (
                   <Button onClick={handleEnrich} variant="default" size="lg">
@@ -958,7 +1009,7 @@ https://www.linkedin.com/posts/username3_activity-555555555"
                 {stats && stats.enriched > 0 && (
                   <Button onClick={downloadCSV} variant="outline" size="sm">
                     <Download className="mr-2 h-4 w-4" />
-                    Download CSV ({stats.enriched})
+                    Download Enriched CSV ({stats.enriched})
                   </Button>
                 )}
               </div>
