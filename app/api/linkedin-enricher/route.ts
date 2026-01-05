@@ -4,6 +4,7 @@ import {
   fetchPostReactions,
   filterByICP,
   enrichContact,
+  enrichContactApollo,
   type LinkedInProfile,
   type ICPFilterResult,
   type EnrichedLead,
@@ -138,15 +139,24 @@ export async function POST(request: NextRequest) {
 export async function PATCH(request: NextRequest) {
   try {
     const cladoApiKey = process.env.CLADO_API_KEY;
+    const apolloApiKey = process.env.APOLLO_API_KEY;
 
-    if (!cladoApiKey) {
+    const { leads, provider = 'clado' } = await request.json();
+
+    // Validate API keys based on provider
+    if (provider === 'clado' && !cladoApiKey) {
       return NextResponse.json(
         { error: "CLADO_API_KEY not configured" },
         { status: 500 }
       );
     }
 
-    const { leads } = await request.json();
+    if (provider === 'apollo' && !apolloApiKey) {
+      return NextResponse.json(
+        { error: "APOLLO_API_KEY not configured" },
+        { status: 500 }
+      );
+    }
 
     if (!Array.isArray(leads) || leads.length === 0) {
       return NextResponse.json(
@@ -155,7 +165,7 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
-    console.log(`[LinkedIn Enricher] Starting enrichment for ${leads.length} leads`);
+    console.log(`[LinkedIn Enricher] Starting enrichment for ${leads.length} leads using ${provider} provider`);
 
     const enrichedLeads: EnrichedLead[] = [];
     let successfulEnrichments = 0;
@@ -169,10 +179,10 @@ export async function PATCH(request: NextRequest) {
       const enrichmentResults = await Promise.allSettled(
         batch.map(async (lead: any) => {
           try {
-            const contact = await enrichContact(
-              lead.profile.linkedin_url,
-              cladoApiKey
-            );
+            // Use appropriate enrichment function based on provider
+            const contact = provider === 'apollo'
+              ? await enrichContactApollo(lead.profile, apolloApiKey!)
+              : await enrichContact(lead.profile.linkedin_url, cladoApiKey!);
 
             // Include all leads, whether they have emails or not
             if (contact.email) {

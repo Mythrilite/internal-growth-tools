@@ -31,6 +31,7 @@ interface SavedState {
   stage: ProcessingStage;
   filterIndex: number;
   enrichIndex: number;
+  enrichmentProvider?: 'clado' | 'apollo';
   savedAt: number;
 }
 
@@ -89,6 +90,7 @@ export default function LinkedInEnricherPage() {
     total: number;
   } | null>(null);
   const [savedState, setSavedState] = useState<SavedState | null>(null);
+  const [enrichmentProvider, setEnrichmentProvider] = useState<'clado' | 'apollo'>('clado');
 
   // Check for saved progress on mount
   useEffect(() => {
@@ -107,6 +109,11 @@ export default function LinkedInEnricherPage() {
     setPostUrls(savedState.urls.join('\n'));
     setStats(savedState.stats);
     setError(null);
+
+    // Restore provider selection if it was saved
+    if (savedState.enrichmentProvider) {
+      setEnrichmentProvider(savedState.enrichmentProvider);
+    }
 
     if (savedState.stage === "filtering") {
       // Resume filtering
@@ -247,6 +254,9 @@ export default function LinkedInEnricherPage() {
     let successCount = saved.stats.enriched;
     let failCount = saved.stats.failed_enrichments;
 
+    // Use the provider from saved state, or fall back to current selection
+    const provider = saved.enrichmentProvider || enrichmentProvider;
+
     // Copy already enriched leads
     for (let i = 0; i < startIndex && i < leadsToEnrich.length; i++) {
       enrichedLeads.push(leadsToEnrich[i]);
@@ -270,7 +280,7 @@ export default function LinkedInEnricherPage() {
           const response = await fetch("/api/linkedin-enricher", {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ leads: batch }),
+            body: JSON.stringify({ leads: batch, provider }),
           });
 
           if (!response.ok) {
@@ -560,7 +570,16 @@ export default function LinkedInEnricherPage() {
   const handleEnrich = async () => {
     if (results.length === 0) return;
 
-    console.log("[Frontend] Starting enrichment for", results.length, "leads");
+    // Validate company data for Apollo provider
+    if (enrichmentProvider === 'apollo') {
+      const leadsWithoutCompany = results.filter(r => !r.profile.company);
+      if (leadsWithoutCompany.length > 0) {
+        console.warn(`[Frontend] ${leadsWithoutCompany.length} leads missing company data for Apollo enrichment`);
+        // You could show a warning to the user here if needed
+      }
+    }
+
+    console.log("[Frontend] Starting enrichment for", results.length, "leads using", enrichmentProvider);
     setEnriching(true);
     setError(null);
     setProgress({ stage: "Enriching contacts", current: 0, total: results.length });
@@ -595,7 +614,7 @@ export default function LinkedInEnricherPage() {
             headers: {
               "Content-Type": "application/json",
             },
-            body: JSON.stringify({ leads: batch }),
+            body: JSON.stringify({ leads: batch, provider: enrichmentProvider }),
           });
 
           if (!response.ok) {
@@ -652,6 +671,7 @@ export default function LinkedInEnricherPage() {
           stage: "enriching",
           filterIndex: allProfiles.length,
           enrichIndex: processed,
+          enrichmentProvider,
           savedAt: Date.now(),
         });
 
@@ -984,6 +1004,40 @@ https://www.linkedin.com/posts/username3_activity-555555555"
                 <CardDescription>
                   {stats?.enriched || 0} with emails, {stats?.failed_enrichments || 0} without
                 </CardDescription>
+              </div>
+              <div className="flex items-center gap-4">
+                {/* Provider Selection - only show if leads are pending */}
+                {results.some(r => r.enrichment_status === "PENDING") && !enriching && (
+                  <div className="flex items-center gap-3">
+                    <Label className="text-sm font-medium whitespace-nowrap">
+                      Enrichment Provider:
+                    </Label>
+                    <div className="flex gap-3">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="enrichment-provider"
+                          value="clado"
+                          checked={enrichmentProvider === 'clado'}
+                          onChange={(e) => setEnrichmentProvider(e.target.value as 'clado' | 'apollo')}
+                          className="w-4 h-4"
+                        />
+                        <span className="text-sm">Clado (LinkedIn URL)</span>
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="enrichment-provider"
+                          value="apollo"
+                          checked={enrichmentProvider === 'apollo'}
+                          onChange={(e) => setEnrichmentProvider(e.target.value as 'clado' | 'apollo')}
+                          className="w-4 h-4"
+                        />
+                        <span className="text-sm">Apollo (Name + Company)</span>
+                      </label>
+                    </div>
+                  </div>
+                )}
               </div>
               <div className="flex gap-2">
                 {/* Show download filtered list button if leads are pending */}

@@ -5,6 +5,7 @@ export interface LinkedInProfile {
   reaction_type?: string;
   timestamp?: string;
   company?: string; // Extracted from headline
+  company_domain?: string; // Extracted from work email
 }
 
 export interface ICPFilterResult {
@@ -25,6 +26,7 @@ export interface ContactData {
   email_subtype?: string;
   phone?: string;
   phone_rating?: number;
+  company_domain?: string; // Extracted from email domain
 }
 
 export interface EnrichedLead {
@@ -485,18 +487,134 @@ export async function enrichContact(
       console.log(`[enrichContact] Selected email: ${selectedEmail.value} (${selectedEmail.subType}, rating: ${selectedEmail.rating})`);
     }
 
+    // Extract company domain from email
+    const companyDomain = selectedEmail?.value
+      ? selectedEmail.value.split('@')[1]?.toLowerCase()
+      : undefined;
+
     const result = {
       email: selectedEmail?.value,
       email_rating: selectedEmail?.rating,
       email_subtype: selectedEmail?.subType,
       phone: undefined,
       phone_rating: undefined,
+      company_domain: companyDomain,
     };
 
     console.log("[enrichContact] Extracted contact data:", result);
     return result;
   } catch (error) {
     console.error(`[enrichContact] Error:`, error);
+    throw error;
+  }
+}
+
+export async function enrichContactApollo(
+  profile: LinkedInProfile,
+  apiKey: string
+): Promise<ContactData> {
+  console.log("[enrichContactApollo] Enriching:", profile.name, "at", profile.company);
+  console.log("[enrichContactApollo] API key (first 10 chars):", apiKey?.substring(0, 10) + "...");
+
+  try {
+    // Parse name into first and last name
+    const nameParts = profile.name.trim().split(' ');
+    const firstName = nameParts[0] || "";
+    const lastName = nameParts.slice(1).join(' ') || "";
+
+    console.log(`[enrichContactApollo] Parsed name: first="${firstName}", last="${lastName}"`);
+
+    // Check if we have required data
+    if (!firstName || !profile.company) {
+      console.warn(`[enrichContactApollo] Missing required data: firstName="${firstName}", company="${profile.company}"`);
+      throw new Error(`Missing required data for Apollo enrichment`);
+    }
+
+    const requestBody = {
+      first_name: firstName,
+      last_name: lastName,
+      organization_name: profile.company,
+      reveal_personal_emails: false,
+    };
+
+    console.log("[enrichContactApollo] Request body:", JSON.stringify(requestBody, null, 2));
+
+    const response = await fetch('https://api.apollo.io/v1/people/match', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache',
+        'X-Api-Key': apiKey,
+      },
+      body: JSON.stringify(requestBody),
+    });
+
+    console.log("[enrichContactApollo] Response status:", response.status);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("[enrichContactApollo] Error response:", errorText);
+      throw new Error(`Apollo API error: ${response.status} - ${errorText}`);
+    }
+
+    const rawText = await response.text();
+    console.log("[enrichContactApollo] Raw response:", rawText);
+
+    const data = JSON.parse(rawText);
+    console.log("[enrichContactApollo] Parsed data:", JSON.stringify(data, null, 2));
+
+    // Extract person data from Apollo response
+    // Apollo returns: { person: { email, ... } }
+    const person = data.person || data;
+
+    if (!person) {
+      console.error("[enrichContactApollo] No person data in response");
+      throw new Error(`No person data returned from Apollo`);
+    }
+
+    // Get email from Apollo response
+    const email = person.email || person.primary_email || null;
+
+    console.log(`[enrichContactApollo] Found email: ${email || "none"}`);
+
+    // Personal email domains to exclude
+    const personalDomains = [
+      'gmail.com', 'yahoo.com', 'aol.com', 'hotmail.com', 'outlook.com',
+      'icloud.com', 'me.com', 'mac.com', 'live.com', 'msn.com',
+      'ymail.com', 'rocketmail.com', 'googlemail.com', 'protonmail.com',
+      'mail.com', 'zoho.com', 'gmx.com', 'inbox.com'
+    ];
+
+    // Filter out personal email domains
+    const isPersonalEmail = (emailAddr: string) => {
+      const domain = emailAddr.toLowerCase().split('@')[1];
+      return personalDomains.includes(domain);
+    };
+
+    // Check if email is personal
+    let filteredEmail = email;
+    if (email && isPersonalEmail(email)) {
+      console.log(`[enrichContactApollo] Filtering out personal email: ${email}`);
+      filteredEmail = null;
+    }
+
+    // Extract organization domain if available
+    const organization = person.organization || person.employment_history?.[0]?.organization;
+    const companyDomain = organization?.primary_domain || organization?.website_url?.replace(/^https?:\/\/(www\.)?/, '').split('/')[0] || null;
+
+    const result = {
+      email: filteredEmail || undefined,
+      email_rating: filteredEmail ? 90 : undefined, // Apollo doesn't provide rating, use 90 as default
+      email_subtype: filteredEmail ? "apollo" : undefined,
+      phone: undefined,
+      phone_rating: undefined,
+      company_domain: companyDomain || undefined,
+    };
+
+    console.log("[enrichContactApollo] Extracted contact data:", result);
+    return result;
+  } catch (error) {
+    console.error(`[enrichContactApollo] Error:`, error);
     throw error;
   }
 }
@@ -510,6 +628,7 @@ export function convertToCSV(leads: EnrichedLead[]): string {
     "linkedin_url",
     "reaction_type",
     "company",
+    "company_domain",
     "email",
     "email_rating",
     "email_type",
@@ -537,6 +656,8 @@ export function convertToCSV(leads: EnrichedLead[]): string {
           return lead.profile.reaction_type || "";
         case "company":
           return lead.profile.company || "";
+        case "company_domain":
+          return lead.contact.company_domain || "";
         case "email":
           return lead.contact.email || "";
         case "email_rating":
