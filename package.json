@@ -9,7 +9,10 @@
     "start": "next start",
     "lint": "next lint",
     "test": "vitest",
-    "test:ui": "vitest --ui"
+    "test:ui": "vitest --ui",
+    "pipeline": "python scripts/pipeline/daily_lead_pipeline.py",
+    "pipeline:test": "python scripts/pipeline/daily_lead_pipeline.py --test",
+    "scheduler": "npx ts-node scripts/scheduler.ts"
   },
   "dependencies": {
     "@internationalized/date": "^3.10.1",
@@ -26,7 +29,9 @@
     "react": "^19.2.0",
     "react-aria-components": "^1.14.0",
     "react-dom": "^19.2.0",
-    "tailwind-merge": "^3.4.0"
+    "tailwind-merge": "^3.4.0",
+    "better-sqlite3": "^11.0.0",
+    "node-cron": "^3.0.3"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -39,7 +44,9 @@
     "eslint-config-next": "16.0.6",
     "tailwindcss": "^4",
     "typescript": "^5",
-    "vitest": "^4.0.16"
+    "vitest": "^4.0.16",
+    "@types/better-sqlite3": "^7.6.9",
+    "@types/node-cron": "^3.0.11"
   },
   "repository": {
     "type": "git",

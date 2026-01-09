@@ -20,6 +20,20 @@ export default function Home() {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <Card>
           <CardHeader>
+            <CardTitle>Growth Dashboard</CardTitle>
+            <CardDescription>
+              Track all cold/warm outbound campaigns across Email, LinkedIn, and Twitter
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Link href="/growth-dashboard">
+              <Button className="w-full">Open Tool</Button>
+            </Link>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
             <CardTitle>Twitter Lead Verifier</CardTitle>
             <CardDescription>
               Filter and verify Twitter leads based on ICP criteria using two-stage filtering
@@ -42,6 +56,25 @@ export default function Home() {
           <CardContent>
             <Link href="/linkedin-enricher">
               <Button className="w-full">Open Tool</Button>
+            </Link>
+          </CardContent>
+        </Card>
+
+        <Card className="border-green-200 bg-green-50/50">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              Pipeline Monitor
+              <span className="text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded-full font-normal">
+                Automated
+              </span>
+            </CardTitle>
+            <CardDescription>
+              Monitor the daily autonomous lead generation pipeline (LinkedIn jobs → Campaigns)
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Link href="/pipeline-monitor">
+              <Button className="w-full" variant="default">Open Monitor</Button>
             </Link>
           </CardContent>
         </Card>

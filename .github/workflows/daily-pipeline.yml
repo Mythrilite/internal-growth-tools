@@ -1,0 +1,77 @@
+name: Daily Lead Generation Pipeline
+
+on:
+  # Run at 7am ET (12:00 UTC in EST, 11:00 UTC in EDT)
+  # Using 12:00 UTC which is 7am EST / 8am EDT
+  schedule:
+    - cron: '0 12 * * *'
+
+  # Allow manual trigger from GitHub UI
+  workflow_dispatch:
+    inputs:
+      test_mode:
+        description: 'Run in test mode (100 jobs instead of 10,000)'
+        required: false
+        default: 'false'
+        type: boolean
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180  # 3 hour timeout for safety
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: 'scripts/requirements.txt'
+
+      - name: Install Python dependencies
+        run: |
+          pip install -r scripts/requirements.txt
+
+      - name: Create data directory
+        run: mkdir -p data
+
+      - name: Run pipeline
+        env:
+          APIFY_API_KEY: ${{ secrets.APIFY_API_KEY }}
+          EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
+          ICYPEAS_API_KEY: ${{ secrets.ICYPEAS_API_KEY }}
+          INSTANTLY_API_KEY: ${{ secrets.INSTANTLY_API_KEY }}
+          PROSP_API_KEY: ${{ secrets.PROSP_API_KEY }}
+        run: |
+          if [ "${{ github.event.inputs.test_mode }}" == "true" ]; then
+            python scripts/pipeline/daily_lead_pipeline.py --test
+          else
+            python scripts/pipeline/daily_lead_pipeline.py
+          fi
+
+      - name: Upload pipeline database
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pipeline-db-${{ github.run_number }}
+          path: data/pipeline.db
+          retention-days: 30
+
+      - name: Upload logs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pipeline-logs-${{ github.run_number }}
+          path: logs/
+          retention-days: 30
+          if-no-files-found: ignore
+
+      # Optional: Notify on failure
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "Pipeline failed! Check the logs above."
+          # Add Slack/Discord webhook notification here if desired
