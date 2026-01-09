@@ -77,10 +77,10 @@ def search_decision_makers(
             results = None
             for attempt in range(MAX_RETRIES):
                 try:
-                    results = exa.search(
+                    results = exa.search_and_contents(
                         query,
                         num_results=EXA_SEARCH_LIMIT,
-                        use_autoprompt=True
+                        text=False  # We only need URLs and titles, not full content
                     )
                     break
                 except Exception as e:
