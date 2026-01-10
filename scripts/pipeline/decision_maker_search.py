@@ -71,21 +71,21 @@ def search_decision_makers(
         if not domain:
             continue
 
-        print(f'  [{i+1}/{len(companies)}] Searching {domain}...', end=' ')
+        print(f'  [{i+1}/{len(companies)}] Searching {company_name}...', end=' ')
         sys.stdout.flush()
 
         try:
-            # Single search query for all relevant roles
-            query = f"CTO, director/head of engineering at {domain}"
+            # Use people category search for better results
+            query = f"CTO OR Head of Engineering at {company_name}"
 
             # Search with retry logic
             results = None
             for attempt in range(MAX_RETRIES):
                 try:
-                    results = exa.search_and_contents(
+                    results = exa.search(
                         query,
-                        num_results=EXA_SEARCH_LIMIT,
-                        text=False  # We only need URLs and titles, not full content
+                        category="people",
+                        num_results=EXA_SEARCH_LIMIT
                     )
                     break
                 except Exception as e:
@@ -98,7 +98,7 @@ def search_decision_makers(
                         raise
 
             if results and results.results:
-                found_people = parse_search_results(results.results, company)
+                found_people = parse_people_search_results(results.results, company)
 
                 if found_people:
                     companies_with_results += 1
@@ -134,6 +134,10 @@ def search_decision_makers(
     print(f'  Companies with results: {companies_with_results}')
     print(f'  Decision makers found: {len(decision_makers)}')
     print(f'  Errors: {len(errors)}')
+    sys.stdout.flush()
+
+    print('Completing search stage...')
+    sys.stdout.flush()
 
     pipeline_run.complete_stage(
         stage_id,
@@ -145,12 +149,110 @@ def search_decision_makers(
     return decision_makers
 
 
+def parse_people_search_results(
+    results: List[Any],
+    company: Dict[str, Any]
+) -> List[Dict[str, Any]]:
+    """
+    Parse Exa people category search results.
+
+    The people category returns structured data like:
+    {
+        "title": "Genevieve Eddison | Chief Technology Officer at ShipperHQ",
+        "url": "https://linkedin.com/in/genevieve-eddison-31761122",
+        "author": "Genevieve Eddison"
+    }
+
+    Args:
+        results: List of Exa search results
+        company: Company dictionary for context
+
+    Returns:
+        List of decision maker dictionaries
+    """
+    found_people = []
+    seen_linkedin_urls = set()
+    company_name_lower = company.get('company_name', '').lower()
+
+    for result in results:
+        url = getattr(result, 'url', '')
+        title = getattr(result, 'title', '')
+        author = getattr(result, 'author', '')
+
+        # Only process LinkedIn URLs
+        if 'linkedin.com/in/' not in url:
+            continue
+
+        # Extract LinkedIn URL
+        linkedin_match = LINKEDIN_URL_PATTERN.search(url)
+        if not linkedin_match:
+            continue
+
+        linkedin_url = f"https://www.linkedin.com/in/{linkedin_match.group(1)}"
+
+        # Skip duplicates
+        if linkedin_url in seen_linkedin_urls:
+            continue
+        seen_linkedin_urls.add(linkedin_url)
+
+        # Parse title format: "Name | Title at Company"
+        person_name = author if author else None
+        person_title = None
+
+        if ' | ' in title:
+            parts = title.split(' | ', 1)
+            if not person_name:
+                person_name = parts[0].strip()
+            if len(parts) > 1:
+                title_part = parts[1]
+                if ' at ' in title_part:
+                    person_title = title_part.split(' at ')[0].strip()
+                else:
+                    person_title = title_part.strip()
+
+        # Check if this person is at the right company
+        title_lower = title.lower()
+        if company_name_lower and company_name_lower not in title_lower:
+            # Person not at this company, skip
+            continue
+
+        # Check if this is a decision maker title
+        if not is_decision_maker_title(title) and not is_decision_maker_title(person_title or ''):
+            continue
+
+        # Skip if no name
+        if not person_name:
+            continue
+
+        first_name, last_name = split_name(person_name)
+
+        found_people.append({
+            # Company info
+            'company_name': company.get('company_name'),
+            'company_domain': company.get('company_domain'),
+            'company_website': company.get('company_website'),
+            'job_title': company.get('job_title'),
+            'employee_count': company.get('employee_count'),
+            'location': company.get('location'),
+            # Person info
+            'person_name': person_name,
+            'person_first_name': first_name,
+            'person_last_name': last_name,
+            'person_title': person_title or extract_title_from_text(title),
+            'linkedin_url': linkedin_url,
+            'source_url': url,
+            'source_title': title,
+        })
+
+    return found_people
+
+
 def parse_search_results(
     results: List[Any],
     company: Dict[str, Any]
 ) -> List[Dict[str, Any]]:
     """
-    Parse Exa search results to extract decision maker information.
+    Parse Exa search results to extract decision maker information (legacy).
 
     Args:
         results: List of Exa search results
