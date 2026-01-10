@@ -165,7 +165,8 @@ def launch_bulk_search(data: List[List[str]], name: str) -> Optional[str]:
             if response.status_code == 200:
                 result = response.json()
                 if result.get('success'):
-                    return result.get('item', {}).get('_id')
+                    # Bulk API returns 'file' ID, not 'item._id'
+                    return result.get('file')
             else:
                 print(f'    Icypeas API error: {response.status_code} - {response.text}')
 
@@ -180,12 +181,12 @@ def launch_bulk_search(data: List[List[str]], name: str) -> Optional[str]:
     return None
 
 
-def poll_for_results(search_id: str) -> Optional[List[Dict]]:
+def poll_for_results(file_id: str) -> Optional[List[Dict]]:
     """
     Poll Icypeas for bulk search results.
 
     Args:
-        search_id: The bulk search ID
+        file_id: The bulk file ID returned from launch_bulk_search
 
     Returns:
         List of result dictionaries or None
@@ -196,13 +197,19 @@ def poll_for_results(search_id: str) -> Optional[List[Dict]]:
     }
 
     start_time = time.time()
+    all_items = []
 
     while time.time() - start_time < ICYPEAS_POLL_TIMEOUT:
         try:
+            # Use mode: bulk and file: fileId to fetch results
             response = requests.post(
                 f'{ICYPEAS_BASE_URL}/bulk-single-searchs/read',
                 headers=headers,
-                json={'id': search_id},
+                json={
+                    'mode': 'bulk',
+                    'file': file_id,
+                    'limit': 100
+                },
                 timeout=30
             )
 
@@ -216,7 +223,46 @@ def poll_for_results(search_id: str) -> Optional[List[Dict]]:
                     statuses = [item.get('status') for item in items]
 
                     if all(s in ['DEBITED', 'NO_RESULT', 'ERROR'] for s in statuses):
-                        return items
+                        all_items.extend(items)
+
+                        # Check if there are more results (pagination)
+                        if len(items) == 100 and result.get('sorts'):
+                            # Fetch next page
+                            continue_fetching = True
+                            sorts = result.get('sorts')
+
+                            while continue_fetching and time.time() - start_time < ICYPEAS_POLL_TIMEOUT:
+                                page_response = requests.post(
+                                    f'{ICYPEAS_BASE_URL}/bulk-single-searchs/read',
+                                    headers=headers,
+                                    json={
+                                        'mode': 'bulk',
+                                        'file': file_id,
+                                        'limit': 100,
+                                        'sorts': sorts
+                                    },
+                                    timeout=30
+                                )
+
+                                if page_response.status_code == 200:
+                                    page_result = page_response.json()
+                                    if page_result.get('success') and page_result.get('items'):
+                                        page_items = page_result['items']
+                                        all_items.extend(page_items)
+
+                                        if len(page_items) < 100 or not page_result.get('sorts'):
+                                            continue_fetching = False
+                                        else:
+                                            sorts = page_result.get('sorts')
+                                    else:
+                                        continue_fetching = False
+                                else:
+                                    continue_fetching = False
+
+                        return all_items
+                    else:
+                        # Still processing, wait and retry
+                        print(f'    Still processing ({sum(1 for s in statuses if s in ["DEBITED", "NO_RESULT", "ERROR"])}/{len(statuses)} complete)...')
 
             time.sleep(ICYPEAS_POLL_INTERVAL)
 
@@ -373,7 +419,8 @@ def launch_bulk_verification(data: List[List[str]], name: str) -> Optional[str]:
             if response.status_code == 200:
                 result = response.json()
                 if result.get('success'):
-                    return result.get('item', {}).get('_id')
+                    # Bulk API returns 'file' ID, not 'item._id'
+                    return result.get('file')
 
         except Exception as e:
             if attempt < MAX_RETRIES - 1:
