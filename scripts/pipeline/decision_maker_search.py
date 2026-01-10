@@ -61,6 +61,8 @@ def search_decision_makers(
     companies_with_results = 0
 
     print(f'Searching for decision makers at {len(companies)} companies...')
+    import sys
+    sys.stdout.flush()
 
     for i, company in enumerate(companies):
         domain = company.get('company_domain')
@@ -68,6 +70,9 @@ def search_decision_makers(
 
         if not domain:
             continue
+
+        print(f'  [{i+1}/{len(companies)}] Searching {domain}...', end=' ')
+        sys.stdout.flush()
 
         try:
             # Single search query for all relevant roles
@@ -86,7 +91,8 @@ def search_decision_makers(
                 except Exception as e:
                     if attempt < MAX_RETRIES - 1:
                         wait_time = RETRY_BACKOFF_BASE ** (attempt + 1)
-                        print(f'Exa API error for {domain}, retrying in {wait_time}s: {e}')
+                        print(f'retry in {wait_time}s ({e})', end=' ')
+                        sys.stdout.flush()
                         time.sleep(wait_time)
                     else:
                         raise
@@ -97,15 +103,19 @@ def search_decision_makers(
                 if found_people:
                     companies_with_results += 1
                     decision_makers.extend(found_people)
+                    print(f'found {len(found_people)} people')
+                else:
+                    print('no matches')
+            else:
+                print('no results')
 
-            # Progress logging
-            if (i + 1) % 50 == 0:
-                print(f'  Processed {i + 1}/{len(companies)} companies, found {len(decision_makers)} people')
+            sys.stdout.flush()
 
             # Rate limiting
             time.sleep(API_DELAY_SECONDS)
 
         except Exception as e:
+            print(f'ERROR: {e}')
             error_msg = f'Error searching {domain}: {str(e)}'
             errors.append({
                 'company': company_name,
@@ -119,7 +129,7 @@ def search_decision_makers(
                 {'company': company_name, 'domain': domain}
             )
 
-    print(f'Search complete:')
+    print(f'\nSearch complete:')
     print(f'  Companies searched: {len(companies)}')
     print(f'  Companies with results: {companies_with_results}')
     print(f'  Decision makers found: {len(decision_makers)}')
