@@ -156,7 +156,7 @@ def launch_bulk_search(data: List[List[str]], name: str) -> Optional[str]:
     for attempt in range(MAX_RETRIES):
         try:
             response = requests.post(
-                f'{ICYPEAS_BASE_URL}/bulk',
+                f'{ICYPEAS_BASE_URL}/bulk-search',
                 headers=headers,
                 json=payload,
                 timeout=60
@@ -165,7 +165,7 @@ def launch_bulk_search(data: List[List[str]], name: str) -> Optional[str]:
             if response.status_code == 200:
                 result = response.json()
                 if result.get('success'):
-                    # Bulk API returns 'file' ID, not 'item._id'
+                    # Bulk API returns 'file' ID
                     return result.get('file')
             else:
                 print(f'    Icypeas API error: {response.status_code} - {response.text}')
@@ -410,7 +410,7 @@ def launch_bulk_verification(data: List[List[str]], name: str) -> Optional[str]:
     for attempt in range(MAX_RETRIES):
         try:
             response = requests.post(
-                f'{ICYPEAS_BASE_URL}/bulk',
+                f'{ICYPEAS_BASE_URL}/bulk-search',
                 headers=headers,
                 json=payload,
                 timeout=60
@@ -419,7 +419,7 @@ def launch_bulk_verification(data: List[List[str]], name: str) -> Optional[str]:
             if response.status_code == 200:
                 result = response.json()
                 if result.get('success'):
-                    # Bulk API returns 'file' ID, not 'item._id'
+                    # Bulk API returns 'file' ID
                     return result.get('file')
 
         except Exception as e:
