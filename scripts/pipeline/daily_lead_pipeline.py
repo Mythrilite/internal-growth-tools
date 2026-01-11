@@ -17,6 +17,7 @@ Options:
 """
 
 import sys
+import time
 import argparse
 from datetime import datetime
 
@@ -66,14 +67,19 @@ def run_pipeline(test_mode: bool = False) -> dict:
     }
     pipeline_run = PipelineRun(config=config)
 
+    stage_times = {}
+
     try:
         # Stage 1: Scrape LinkedIn jobs
         print('\n' + '=' * 40)
         print('STAGE 1: Scraping LinkedIn Jobs')
         print('=' * 40)
 
+        stage_start = time.time()
         job_count = get_job_count(test_mode)
         jobs = scrape_linkedin_jobs(job_count, pipeline_run)
+        stage_times['1_scrape'] = time.time() - stage_start
+        print(f'⏱️  Stage 1 completed in {stage_times["1_scrape"]:.1f}s')
 
         if not jobs:
             raise Exception('No jobs scraped from LinkedIn')
@@ -83,6 +89,7 @@ def run_pipeline(test_mode: bool = False) -> dict:
         print('STAGE 2: Filtering Companies')
         print('=' * 40)
 
+        stage_start = time.time()
         filtered_companies = filter_companies(jobs, pipeline_run)
 
         if not filtered_companies:
@@ -93,6 +100,8 @@ def run_pipeline(test_mode: bool = False) -> dict:
 
         # Prepare for search
         companies_to_search = prepare_for_search(software_companies)
+        stage_times['2_filter'] = time.time() - stage_start
+        print(f'⏱️  Stage 2 completed in {stage_times["2_filter"]:.1f}s')
 
         print(f'\nCompanies ready for search: {len(companies_to_search)}')
 
@@ -101,7 +110,10 @@ def run_pipeline(test_mode: bool = False) -> dict:
         print('STAGE 3: Searching for Decision Makers')
         print('=' * 40)
 
+        stage_start = time.time()
         decision_makers = search_decision_makers(companies_to_search, pipeline_run)
+        stage_times['3_search'] = time.time() - stage_start
+        print(f'⏱️  Stage 3 completed in {stage_times["3_search"]:.1f}s')
 
         if not decision_makers:
             raise Exception('No decision makers found')
@@ -111,13 +123,17 @@ def run_pipeline(test_mode: bool = False) -> dict:
         print('STAGE 4: Enriching with Emails')
         print('=' * 40)
 
+        stage_start = time.time()
         enriched_leads = enrich_with_emails(decision_makers, pipeline_run)
+        stage_times['4_enrich'] = time.time() - stage_start
+        print(f'⏱️  Stage 4 completed in {stage_times["4_enrich"]:.1f}s')
 
         # Stage 5: Validate leads
         print('\n' + '=' * 40)
         print('STAGE 5: Validating Leads')
         print('=' * 40)
 
+        stage_start = time.time()
         stage_id = pipeline_run.start_stage('validate', input_count=len(enriched_leads))
 
         valid_leads = []
@@ -154,16 +170,35 @@ def run_pipeline(test_mode: bool = False) -> dict:
             output_count=len(valid_leads),
             error_count=invalid_count
         )
+        stage_times['5_validate'] = time.time() - stage_start
+        print(f'⏱️  Stage 5 completed in {stage_times["5_validate"]:.1f}s')
 
         # Stage 6: Push to campaigns
         print('\n' + '=' * 40)
         print('STAGE 6: Pushing to Campaigns')
         print('=' * 40)
 
+        stage_start = time.time()
         push_results = push_to_campaigns(valid_leads, pipeline_run)
+        stage_times['6_push'] = time.time() - stage_start
+        print(f'⏱️  Stage 6 completed in {stage_times["6_push"]:.1f}s')
 
         # Complete pipeline run
         pipeline_run.complete('completed')
+
+        # Print timing summary
+        total_time = sum(stage_times.values())
+        print('\n' + '=' * 60)
+        print('TIMING SUMMARY')
+        print('=' * 60)
+        print(f'Stage 1 (Scrape):   {stage_times.get("1_scrape", 0):>7.1f}s')
+        print(f'Stage 2 (Filter):   {stage_times.get("2_filter", 0):>7.1f}s')
+        print(f'Stage 3 (Search):   {stage_times.get("3_search", 0):>7.1f}s')
+        print(f'Stage 4 (Enrich):   {stage_times.get("4_enrich", 0):>7.1f}s')
+        print(f'Stage 5 (Validate): {stage_times.get("5_validate", 0):>7.1f}s')
+        print(f'Stage 6 (Push):     {stage_times.get("6_push", 0):>7.1f}s')
+        print('-' * 30)
+        print(f'TOTAL:              {total_time:>7.1f}s')
 
         # Print summary
         print('\n' + '=' * 60)

@@ -3,7 +3,15 @@
     "allow": [
       "Bash(dir:*)",
       "Bash(npm test:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "WebFetch(domain:search.clado.ai)",
+      "WebSearch",
+      "WebFetch(domain:docs.clado.ai)",
+      "WebFetch(domain:docs.apollo.io)"
     ]
-  }
+  },
+  "enabledMcpjsonServers": [
+    "notion"
+  ],
+  "enableAllProjectMcpServers": true
 }
