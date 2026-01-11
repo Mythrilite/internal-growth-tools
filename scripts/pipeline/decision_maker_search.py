@@ -5,7 +5,6 @@ Finds CTOs, Heads of Engineering, and similar roles at target companies.
 
 import re
 import time
-import signal
 from typing import List, Dict, Any, Optional, Tuple
 from exa_py import Exa
 
@@ -79,37 +78,17 @@ def search_decision_makers(
             # Use people category search for better results
             query = f"CTO OR Head of Engineering at {company_name}"
 
-            # Search with retry logic and timeout
+            # Search with retry logic
             results = None
-            search_timeout = 45  # 45 second timeout per search
             for attempt in range(MAX_RETRIES):
                 try:
-                    # Execute search with timeout protection
-                    def timeout_handler(signum, frame):
-                        raise TimeoutError(f"Exa search timed out after {search_timeout}s")
-                    
-                    # Set alarm for timeout (Unix-like systems)
-                    try:
-                        signal.signal(signal.SIGALRM, timeout_handler)
-                        signal.alarm(search_timeout + 5)  # Add 5s buffer
-                    except (AttributeError, ValueError):
-                        # Windows doesn't support signal.alarm, skip timeout
-                        pass
-                    
-                    try:
-                        results = exa.search(
-                            query,
-                            category="people",
-                            num_results=EXA_SEARCH_LIMIT
-                        )
-                    finally:
-                        try:
-                            signal.alarm(0)  # Cancel alarm
-                        except (AttributeError, ValueError):
-                            pass
-                    
+                    results = exa.search(
+                        query,
+                        category="people",
+                        num_results=EXA_SEARCH_LIMIT
+                    )
                     break
-                except (TimeoutError, Exception) as e:
+                except Exception as e:
                     if attempt < MAX_RETRIES - 1:
                         wait_time = RETRY_BACKOFF_BASE ** (attempt + 1)
                         print(f'retry in {wait_time}s ({str(e)[:40]})', end=' ')

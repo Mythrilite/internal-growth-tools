@@ -14,12 +14,18 @@ from .config import DATABASE_PATH
 
 
 def init_database():
-    """Initialize the database with schema."""
+    """Initialize the database with schema and optimizations."""
     schema_path = Path(__file__).parent / 'schema.sql'
     with open(schema_path, 'r') as f:
         schema = f.read()
 
     with get_connection() as conn:
+        # Set up optimizations for concurrent access
+        conn.execute('PRAGMA journal_mode=WAL')  # Write-Ahead Logging for better concurrency
+        conn.execute('PRAGMA synchronous=NORMAL')  # Balance safety and speed
+        conn.execute('PRAGMA cache_size=10000')  # Larger cache
+        conn.execute('PRAGMA temp_store=MEMORY')  # Use memory for temp storage
+        
         conn.executescript(schema)
         conn.commit()
 
@@ -29,11 +35,6 @@ def get_connection():
     """Context manager for database connections with lock timeout."""
     conn = sqlite3.connect(str(DATABASE_PATH), timeout=30.0)  # 30 second timeout for locks
     conn.row_factory = sqlite3.Row
-    # Enable WAL mode for better concurrent access
-    try:
-        conn.execute('PRAGMA journal_mode=WAL')
-    except Exception:
-        pass  # WAL might not be available on all systems
     try:
         yield conn
     finally:
@@ -62,14 +63,29 @@ class PipelineRun:
 
     def complete(self, status: str = 'completed', error_message: Optional[str] = None):
         """Mark the pipeline run as completed."""
-        with get_connection() as conn:
-            conn.execute(
-                '''UPDATE pipeline_runs
-                   SET completed_at = ?, status = ?, error_message = ?
-                   WHERE id = ?''',
-                (datetime.utcnow().isoformat(), status, error_message, self.run_id)
-            )
-            conn.commit()
+        max_retries = 5
+        retry_count = 0
+        
+        while retry_count < max_retries:
+            try:
+                with get_connection() as conn:
+                    conn.execute(
+                        '''UPDATE pipeline_runs
+                           SET completed_at = ?, status = ?, error_message = ?
+                           WHERE id = ?''',
+                        (datetime.utcnow().isoformat(), status, error_message, self.run_id)
+                    )
+                    conn.commit()
+                return  # Success
+            except Exception as e:
+                retry_count += 1
+                if retry_count < max_retries:
+                    import time
+                    wait_time = 2 ** retry_count
+                    print(f"\nRetrying pipeline completion (attempt {retry_count}/{max_retries}, waiting {wait_time}s): {str(e)[:100]}")
+                    time.sleep(wait_time)
+                else:
+                    raise Exception(f"Failed to complete pipeline after {max_retries} attempts: {str(e)}")
 
     def start_stage(self, stage: str, input_count: int = 0) -> int:
         """Start tracking a new stage."""
@@ -91,20 +107,40 @@ class PipelineRun:
         error_details: Optional[List[Dict]] = None
     ):
         """Mark a stage as completed with metrics."""
-        with get_connection() as conn:
-            conn.execute(
-                '''UPDATE stage_metrics
-                   SET completed_at = ?, output_count = ?, error_count = ?, error_details = ?
-                   WHERE id = ?''',
-                (
-                    datetime.utcnow().isoformat(),
-                    output_count,
-                    error_count,
-                    json.dumps(error_details) if error_details else None,
-                    stage_id
-                )
-            )
-            conn.commit()
+        max_retries = 5
+        retry_count = 0
+        last_error = None
+        
+        while retry_count < max_retries:
+            try:
+                with get_connection() as conn:
+                    # Serialize error details first to catch any JSON errors
+                    error_json = json.dumps(error_details) if error_details else None
+                    
+                    conn.execute(
+                        '''UPDATE stage_metrics
+                           SET completed_at = ?, output_count = ?, error_count = ?, error_details = ?
+                           WHERE id = ?''',
+                        (
+                            datetime.utcnow().isoformat(),
+                            output_count,
+                            error_count,
+                            error_json,
+                            stage_id
+                        )
+                    )
+                    conn.commit()
+                return  # Success
+            except Exception as e:
+                last_error = e
+                retry_count += 1
+                if retry_count < max_retries:
+                    import time
+                    wait_time = 2 ** retry_count  # Exponential backoff
+                    print(f"\nRetrying stage completion (attempt {retry_count}/{max_retries}, waiting {wait_time}s): {str(e)[:100]}")
+                    time.sleep(wait_time)
+                else:
+                    raise Exception(f"Failed to complete stage after {max_retries} attempts: {str(last_error)}")
 
     def log_error(
         self,

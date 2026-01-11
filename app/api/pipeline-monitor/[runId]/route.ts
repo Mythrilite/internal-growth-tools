@@ -59,7 +59,8 @@ interface Lead {
 
 function getDatabase() {
   try {
-    return new Database(DB_PATH, { readonly: true });
+    // Don't use readonly: true on Windows as it can cause lock issues
+    return new Database(DB_PATH);
   } catch {
     return null;
   }
