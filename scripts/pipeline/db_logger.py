@@ -26,9 +26,14 @@ def init_database():
 
 @contextmanager
 def get_connection():
-    """Context manager for database connections."""
-    conn = sqlite3.connect(str(DATABASE_PATH))
+    """Context manager for database connections with lock timeout."""
+    conn = sqlite3.connect(str(DATABASE_PATH), timeout=30.0)  # 30 second timeout for locks
     conn.row_factory = sqlite3.Row
+    # Enable WAL mode for better concurrent access
+    try:
+        conn.execute('PRAGMA journal_mode=WAL')
+    except Exception:
+        pass  # WAL might not be available on all systems
     try:
         yield conn
     finally:

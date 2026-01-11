@@ -67,31 +67,38 @@ export async function GET(request: Request) {
   }
 
   try {
-    // Get all runs
-    const runs = db
+    // Collect all queries in a transaction to minimize lock time
+    let runs: PipelineRun[] = [];
+    let totalRuns = { total: 0 };
+    let successfulRuns = { total: 0 };
+    let totalLeads = { total: 0 };
+    let leadsByStatus: { status: string; count: number }[] = [];
+    let avgLeads = { avg_leads: null as number | null };
+
+    // Execute all reads quickly then close
+    runs = db
       .prepare(
         `SELECT * FROM pipeline_runs ORDER BY started_at DESC LIMIT ?`
       )
       .all(limit) as PipelineRun[];
 
-    // Get summary stats
-    const totalRuns = db
+    totalRuns = db
       .prepare(`SELECT COUNT(*) as total FROM pipeline_runs`)
       .get() as { total: number };
 
-    const successfulRuns = db
+    successfulRuns = db
       .prepare(`SELECT COUNT(*) as total FROM pipeline_runs WHERE status = 'completed'`)
       .get() as { total: number };
 
-    const totalLeads = db
+    totalLeads = db
       .prepare(`SELECT COUNT(*) as total FROM leads`)
       .get() as { total: number };
 
-    const leadsByStatus = db
+    leadsByStatus = db
       .prepare(`SELECT status, COUNT(*) as count FROM leads GROUP BY status`)
       .all() as { status: string; count: number }[];
 
-    const avgLeads = db
+    avgLeads = db
       .prepare(
         `SELECT AVG(lead_count) as avg_leads FROM (
           SELECT run_id, COUNT(*) as lead_count FROM leads GROUP BY run_id
@@ -99,7 +106,7 @@ export async function GET(request: Request) {
       )
       .get() as { avg_leads: number | null };
 
-    // Enrich runs with stage metrics
+    // Fetch stage and lead data for each run
     const enrichedRuns = runs.map((run) => {
       const stages = db!
         .prepare(`SELECT * FROM stage_metrics WHERE run_id = ? ORDER BY started_at`)

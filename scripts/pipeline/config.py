@@ -62,7 +62,7 @@ PROSP_CAMPAIGN_ID = '1c7017ab-2e26-4f2e-b89d-8f0d6fc428d5'
 PROSP_API_URL = 'https://prosp.ai/api/v1'
 
 # Rate Limiting
-API_DELAY_SECONDS = 0.5  # Delay between individual API calls
+API_DELAY_SECONDS = 2.0  # Delay between individual API calls (increased from 0.5 for Exa stability)
 BATCH_DELAY_SECONDS = 2  # Delay between batches
 
 # Retry Configuration
