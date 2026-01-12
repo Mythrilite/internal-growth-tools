@@ -102,7 +102,11 @@ def enrich_with_emails(
             lead['email_certainty'] = None
             lead['email_verified'] = False
 
-    print(f'Enrichment complete: {success_count}/{len(leads)} leads with emails found')
+    print(f'Enrichment complete: {success_count}/{len(valid_leads)} leads with emails found')
+    if success_count == 0 and email_results:
+        print(f'  Debug: Got {len(email_results)} results but no matches found')
+        print(f'  Sample result keys: {list(email_results.keys())[:3]}')
+        print(f'  Sample lead key: {[(l.get("person_first_name", "").lower(), l.get("person_last_name", "").lower(), l.get("company_domain", "").lower()) for l in valid_leads[:1]]}')
 
     pipeline_run.complete_stage(
         stage_id,
@@ -277,13 +281,14 @@ def poll_bulk_completion(
             if response.status_code == 200:
                 result = response.json()
 
-                if result.get('success') and result.get('items'):
-                    items = result['items']
-                    if items:
-                        item = items[0]
-                        status = item.get('status')
-                        finished = item.get('finished', False)
-                        progress = item.get('progress', 0)
+                if result.get('success'):
+                    # Try new format first: files array
+                    files = result.get('files', [])
+                    if files:
+                        file_obj = files[0]
+                        status = file_obj.get('status')
+                        finished = file_obj.get('finished', False)
+                        progress = file_obj.get('progress', 0)
 
                         # Log progress updates
                         if progress != last_progress:
@@ -293,10 +298,27 @@ def poll_bulk_completion(
                         if status == 'done' or finished:
                             print(f'      Completed! Status={status}, Finished={finished}')
                             return True
-                else:
-                    # Log if we're not getting expected response structure
-                    if poll_count % 5 == 1:  # Log every ~5 polls
-                        print(f'      Poll #{poll_count} ({elapsed}s elapsed): success={result.get("success")}, items={bool(result.get("items"))}, result keys={list(result.keys())}')
+                    # Fall back to items format
+                    elif result.get('items'):
+                        items = result['items']
+                        if items:
+                            item = items[0]
+                            status = item.get('status')
+                            finished = item.get('finished', False)
+                            progress = item.get('progress', 0)
+
+                            # Log progress updates
+                            if progress != last_progress:
+                                print(f'      Progress: {progress}/{total_items} ({elapsed}s elapsed, poll #{poll_count})')
+                                last_progress = progress
+
+                            if status == 'done' or finished:
+                                print(f'      Completed! Status={status}, Finished={finished}')
+                                return True
+                    else:
+                        # Log if we're not getting expected response structure
+                        if poll_count % 5 == 1:  # Log every ~5 polls
+                            print(f'      Poll #{poll_count} ({elapsed}s elapsed): files={len(files)}, items={bool(result.get("items"))}, keys={list(result.keys())}')
             else:
                 print(f'      Poll #{poll_count} returned {response.status_code} after {elapsed}s: {response.text[:150]}')
 
@@ -360,6 +382,9 @@ def fetch_bulk_results(
                 if result.get('success') and result.get('items'):
                     items = result['items']
                     page += 1
+                    
+                    if page == 1:
+                        print(f'      Fetching results: got {len(items)} items on page 1')
 
                     for item in items:
                         # Extract search parameters
@@ -390,10 +415,12 @@ def fetch_bulk_results(
                         if not sort_value:
                             has_more = False
 
-                    if page % 5 == 0:
-                        print(f'      Fetched {len(results)} results so far (page {page})...')
+                    if page % 5 == 0 or len(items) < 100:
+                        print(f'      Fetched {len(results)} results so far (page {page}, got {len(items)} items)...')
 
                 else:
+                    if page == 0:
+                        print(f'      Fetch returned: success={result.get("success")}, items={bool(result.get("items"))}, keys={list(result.keys())}')
                     has_more = False
 
             elif response.status_code == 429:
@@ -401,11 +428,13 @@ def fetch_bulk_results(
                 continue
 
             else:
-                print(f'      Fetch results error: {response.status_code}')
+                print(f'      Fetch results error: {response.status_code}: {response.text[:200]}')
                 has_more = False
 
         except Exception as e:
             print(f'      Fetch error: {e}')
+            import traceback
+            traceback.print_exc()
             has_more = False
 
     return results
