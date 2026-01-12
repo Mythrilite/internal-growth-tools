@@ -1,0 +1,12 @@
+ADD THIS LINE TO YOUR .env FILE:
+
+ICYPEAS_USER_ID=e4aDpJsBimkh-TeQaV1A
+
+That's it! The bulk email enrichment will then work properly.
+
+If you don't have a .env file yet, create one in the project root with:
+
+ICYPEAS_API_KEY=your_icypeas_api_key_here
+ICYPEAS_USER_ID=e4aDpJsBimkh-TeQaV1A
+
+(Plus any other API keys you're using)

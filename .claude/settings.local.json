@@ -8,7 +8,8 @@
       "WebSearch",
       "WebFetch(domain:docs.clado.ai)",
       "WebFetch(domain:docs.apollo.io)",
-      "WebFetch(domain:api-doc.icypeas.com)"
+      "WebFetch(domain:api-doc.icypeas.com)",
+      "Bash(python scripts/pipeline/test_bulk_enrich.py:*)"
     ]
   },
   "enableAllProjectMcpServers": true,

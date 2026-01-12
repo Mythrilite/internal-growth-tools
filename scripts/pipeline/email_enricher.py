@@ -11,6 +11,7 @@ from datetime import datetime
 from .config import (
     ICYPEAS_API_KEY,
     ICYPEAS_BASE_URL,
+    ICYPEAS_USER_ID,
     ICYPEAS_POLL_INTERVAL,
     ICYPEAS_POLL_TIMEOUT,
     ICYPEAS_BATCH_SIZE,
@@ -188,6 +189,7 @@ def submit_bulk_search(data: List[List[str]], headers: Dict[str, str]) -> Option
         File ID for the bulk search, or None on failure
     """
     payload = {
+        'user': ICYPEAS_USER_ID,
         'name': f'pipeline_bulk_{datetime.now().strftime("%Y%m%d_%H%M%S")}',
         'task': 'email-search',
         'data': data

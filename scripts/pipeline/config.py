@@ -61,6 +61,7 @@ LLM_VALIDATION_ENABLED = False  # Disabled by default - adds significant overhea
 
 # Icypeas Configuration
 ICYPEAS_BASE_URL = 'https://app.icypeas.com/api'
+ICYPEAS_USER_ID = os.getenv('ICYPEAS_USER_ID', '')  # User ID for bulk search API
 ICYPEAS_BATCH_SIZE = 5000  # Max items per bulk request
 ICYPEAS_POLL_INTERVAL = 5  # Seconds between status checks
 ICYPEAS_POLL_TIMEOUT = 600  # Max seconds to wait for results
