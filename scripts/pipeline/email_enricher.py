@@ -163,14 +163,20 @@ def bulk_email_search(
 
         # Poll for completion
         print(f'    Waiting for bulk search to complete...')
-        if not poll_bulk_completion(file_id, headers, len(batch)):
-            print(f'    Bulk search timed out for batch {batch_num}')
-            continue
+        completed = poll_bulk_completion(file_id, headers, len(batch))
+        if not completed:
+            print(f'    Bulk search polling timed out for batch {batch_num}, trying to fetch results anyway...')
 
-        # Fetch results
+        # Fetch results (try regardless of poll status, as results may be available)
         print(f'    Fetching results...')
         batch_results = fetch_bulk_results(file_id, headers, keys)
-        all_results.update(batch_results)
+        
+        if batch_results:
+            all_results.update(batch_results)
+            print(f'    Batch {batch_num} got {len(batch_results)} results despite timeout')
+        elif not completed:
+            print(f'    Batch {batch_num}: No results found')
+            continue
 
         print(f'    Batch {batch_num} complete: {len(batch_results)} emails found')
 
@@ -254,9 +260,11 @@ def poll_bulk_completion(
     start_time = time.time()
     poll_interval = ICYPEAS_POLL_INTERVAL
     last_progress = 0
+    poll_count = 0
 
     while time.time() - start_time < ICYPEAS_POLL_TIMEOUT:
         try:
+            poll_count += 1
             response = requests.post(
                 f'{ICYPEAS_BASE_URL}/search-files/read',
                 headers=headers,
@@ -264,6 +272,8 @@ def poll_bulk_completion(
                 timeout=30
             )
 
+            elapsed = int(time.time() - start_time)
+            
             if response.status_code == 200:
                 result = response.json()
 
@@ -277,21 +287,30 @@ def poll_bulk_completion(
 
                         # Log progress updates
                         if progress != last_progress:
-                            elapsed = int(time.time() - start_time)
-                            print(f'      Progress: {progress}/{total_items} ({elapsed}s elapsed)')
+                            print(f'      Progress: {progress}/{total_items} ({elapsed}s elapsed, poll #{poll_count})')
                             last_progress = progress
 
                         if status == 'done' or finished:
+                            print(f'      Completed! Status={status}, Finished={finished}')
                             return True
+                else:
+                    # Log if we're not getting expected response structure
+                    if poll_count % 5 == 1:  # Log every ~5 polls
+                        print(f'      Poll #{poll_count} ({elapsed}s elapsed): success={result.get("success")}, items={bool(result.get("items"))}, result keys={list(result.keys())}')
+            else:
+                print(f'      Poll #{poll_count} returned {response.status_code} after {elapsed}s: {response.text[:150]}')
 
             time.sleep(poll_interval)
             # Gradual backoff: 5s -> 7s -> 10s -> 15s -> 20s (capped)
             poll_interval = min(poll_interval * 1.4, 20)
 
         except Exception as e:
-            print(f'      Poll error: {e}')
+            elapsed = int(time.time() - start_time)
+            print(f'      Poll #{poll_count} error after {elapsed}s: {e}')
             time.sleep(poll_interval)
 
+    elapsed = int(time.time() - start_time)
+    print(f'      TIMEOUT: Polling took {elapsed}s (limit is {ICYPEAS_POLL_TIMEOUT}s) after {poll_count} polls')
     return False
 
 
