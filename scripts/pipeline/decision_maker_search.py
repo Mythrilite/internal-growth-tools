@@ -25,22 +25,46 @@ from .config import (
 from .db_logger import PipelineRun
 
 
-# Patterns to identify decision makers from search results
+# Patterns to identify decision makers from search results (expanded for more coverage)
 TITLE_PATTERNS = [
+    # C-Level
     r'\bCTO\b',
     r'\bChief Technology Officer\b',
     r'\bChief Technical Officer\b',
+    r'\bCPO\b',
+    r'\bChief Product Officer\b',
+    # VP Level
     r'\bVP of Engineering\b',
+    r'\bVP Engineering\b',
     r'\bVice President.*Engineering\b',
+    r'\bVP.*Technology\b',
+    r'\bVP of Product\b',
+    r'\bVP Product\b',
+    # Head/Director Level
     r'\bHead of Engineering\b',
+    r'\bHead of Technology\b',
+    r'\bHead of Product\b',
     r'\bDirector of Engineering\b',
     r'\bEngineering Director\b',
-    r'\bVP.*Technology\b',
-    r'\bHead of Technology\b',
+    r'\bDirector.*Engineering\b',
+    r'\bSr\.? Director.*Engineering\b',
+    r'\bSenior Director.*Engineering\b',
+    # Manager Level (decision makers at smaller companies)
+    r'\bEngineering Manager\b',
+    r'\bSr\.? Engineering Manager\b',
+    r'\bSenior Engineering Manager\b',
+    r'\bEngineering Lead\b',
+    r'\bLead Engineer\b',
+    r'\bPrincipal Engineer\b',
+    r'\bStaff Engineer\b',
+    r'\bDistinguished Engineer\b',
+    # Founders
     r'\bCo-Founder.*CTO\b',
     r'\bFounder.*CTO\b',
     r'\bTechnical Co-Founder\b',
     r'\bFounding Engineer\b',
+    r'\bCo-Founder\b',
+    r'\bFounder\b',
 ]
 
 LINKEDIN_URL_PATTERN = re.compile(r'linkedin\.com/in/([a-zA-Z0-9_-]+)')
@@ -175,8 +199,8 @@ def search_decision_makers(
         sys.stdout.flush()
 
         try:
-            # Use people category search for better results
-            query = f"CTO OR Head of Engineering at {company_name}"
+            # Use people category search with expanded query for better coverage
+            query = f'(CTO OR "VP Engineering" OR "Head of Engineering" OR "Director of Engineering" OR "Engineering Manager" OR Founder) at {company_name}'
 
             # Search with retry logic
             results = None

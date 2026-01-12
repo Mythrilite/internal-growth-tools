@@ -6,6 +6,8 @@ Adds validated leads to Instantly (email) and Prosp (LinkedIn) campaigns.
 import time
 import requests
 from typing import List, Dict, Any, Tuple
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 from .config import (
     INSTANTLY_API_KEY,
@@ -17,9 +19,31 @@ from .config import (
     PROSP_CAMPAIGN_ID,
     MAX_RETRIES,
     RETRY_BACKOFF_BASE,
-    BATCH_DELAY_SECONDS
+    PROSP_WORKERS
 )
 from .db_logger import PipelineRun
+
+
+# Thread-safe counter for Prosp progress
+class ProspProgressCounter:
+    def __init__(self):
+        self.uploaded = 0
+        self.failed = 0
+        self.lock = threading.Lock()
+
+    def increment_success(self):
+        with self.lock:
+            self.uploaded += 1
+            return self.uploaded
+
+    def increment_failure(self):
+        with self.lock:
+            self.failed += 1
+            return self.failed
+
+    def get_stats(self):
+        with self.lock:
+            return self.uploaded, self.failed
 
 
 def validate_leads(leads: List[Dict[str, Any]]) -> Tuple[List[Dict], List[Dict]]:
@@ -192,8 +216,6 @@ def push_to_instantly(
                     total_failed += len(batch)
                     pipeline_run.log_error('push_email', 'REQUEST_ERROR', str(e))
 
-        time.sleep(BATCH_DELAY_SECONDS)
-
     print(f'Instantly push complete: {total_uploaded} uploaded, {total_failed} failed')
 
     pipeline_run.complete_stage(
@@ -215,7 +237,7 @@ def push_to_prosp(
     pipeline_run: PipelineRun
 ) -> Dict[str, Any]:
     """
-    Push leads to Prosp LinkedIn campaign.
+    Push leads to Prosp LinkedIn campaign using parallel processing.
 
     Args:
         leads: List of validated leads
@@ -230,14 +252,14 @@ def push_to_prosp(
         pipeline_run.complete_stage(stage_id, output_count=0)
         return {'uploaded': 0, 'failed': 0}
 
-    total_uploaded = 0
-    total_failed = 0
+    progress = ProspProgressCounter()
     errors = []
+    errors_lock = threading.Lock()
 
-    print(f'Pushing {len(leads)} leads to Prosp...')
+    print(f'Pushing {len(leads)} leads to Prosp using {PROSP_WORKERS} workers...')
 
-    # Prosp adds one lead at a time
-    for i, lead in enumerate(leads):
+    def push_single_lead(lead: Dict[str, Any], index: int) -> bool:
+        """Push a single lead to Prosp (runs in thread pool)."""
         payload = {
             'api_key': PROSP_API_KEY,
             'linkedin_url': lead.get('linkedin_url'),
@@ -264,40 +286,51 @@ def push_to_prosp(
                 )
 
                 if response.status_code in [200, 201]:
-                    total_uploaded += 1
-                    break
+                    count = progress.increment_success()
+                    if count % 50 == 0:
+                        print(f'  Uploaded {count}/{len(leads)} leads to Prosp')
+                    return True
                 else:
                     if attempt < MAX_RETRIES - 1:
                         wait_time = RETRY_BACKOFF_BASE ** (attempt + 1)
                         time.sleep(wait_time)
                     else:
-                        error_msg = f'Prosp API error: {response.status_code}'
-                        errors.append({
-                            'lead_index': i,
-                            'linkedin_url': lead.get('linkedin_url'),
-                            'error': error_msg
-                        })
-                        total_failed += 1
+                        with errors_lock:
+                            errors.append({
+                                'lead_index': index,
+                                'linkedin_url': lead.get('linkedin_url'),
+                                'error': f'Prosp API error: {response.status_code}'
+                            })
+                        progress.increment_failure()
+                        return False
 
             except Exception as e:
                 if attempt < MAX_RETRIES - 1:
                     wait_time = RETRY_BACKOFF_BASE ** (attempt + 1)
                     time.sleep(wait_time)
                 else:
-                    errors.append({
-                        'lead_index': i,
-                        'linkedin_url': lead.get('linkedin_url'),
-                        'error': str(e)
-                    })
-                    total_failed += 1
+                    with errors_lock:
+                        errors.append({
+                            'lead_index': index,
+                            'linkedin_url': lead.get('linkedin_url'),
+                            'error': str(e)
+                        })
+                    progress.increment_failure()
+                    return False
 
-        # Progress logging
-        if (i + 1) % 100 == 0:
-            print(f'  Processed {i + 1}/{len(leads)} leads')
+        return False
 
-        # Small delay to avoid rate limiting
-        time.sleep(0.2)
+    # Process leads in parallel
+    with ThreadPoolExecutor(max_workers=PROSP_WORKERS) as executor:
+        futures = {executor.submit(push_single_lead, lead, i): lead for i, lead in enumerate(leads)}
 
+        for future in as_completed(futures):
+            try:
+                future.result()
+            except Exception:
+                pass  # Errors already tracked in push_single_lead
+
+    total_uploaded, total_failed = progress.get_stats()
     print(f'Prosp push complete: {total_uploaded} uploaded, {total_failed} failed')
 
     pipeline_run.complete_stage(

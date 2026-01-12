@@ -42,12 +42,12 @@ TEST_JOB_COUNT = 100
 
 # Company Filter Configuration
 MIN_EMPLOYEES = 11
-MAX_EMPLOYEES = 200
-ALLOWED_COUNTRIES = ['US']
+MAX_EMPLOYEES = 500  # Expanded from 200 to capture more mid-market companies
+ALLOWED_COUNTRIES = ['US', 'CA', 'GB', 'AU']  # Added Canada, UK, Australia
 
 # Exa AI Configuration
-EXA_SEARCH_LIMIT = 10  # Max results per company search
-EXA_API_DELAY = 0.5  # Delay between Exa API calls (seconds)
+EXA_SEARCH_LIMIT = 25  # Increased from 10 for more results per company
+EXA_API_DELAY = 0.3  # Reduced from 0.5 for faster processing
 
 # LLM Validation Configuration
 OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1'
@@ -69,8 +69,12 @@ PROSP_CAMPAIGN_ID = '1c7017ab-2e26-4f2e-b89d-8f0d6fc428d5'
 PROSP_API_URL = 'https://prosp.ai/api/v1'
 
 # Rate Limiting
-API_DELAY_SECONDS = 2.0  # Delay between individual API calls (increased from 0.5 for Exa stability)
-BATCH_DELAY_SECONDS = 2  # Delay between batches
+API_DELAY_SECONDS = 0.5  # Reduced from 2.0 - only used for Icypeas now
+BATCH_DELAY_SECONDS = 0.5  # Reduced from 2 - minimal delay between batches
+
+# Parallel Processing Configuration
+ENRICHMENT_WORKERS = 10  # Number of parallel workers for email enrichment
+PROSP_WORKERS = 5  # Number of parallel workers for Prosp push
 
 # Retry Configuration
 MAX_RETRIES = 3

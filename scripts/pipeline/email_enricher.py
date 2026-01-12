@@ -1,11 +1,13 @@
 """
 Email Enricher module using Icypeas API.
-Uses single email search for reliability (bulk API was unreliable).
+Uses parallel processing for faster enrichment.
 """
 
 import time
 import requests
 from typing import List, Dict, Any, Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 from .config import (
     ICYPEAS_API_KEY,
@@ -14,9 +16,24 @@ from .config import (
     ICYPEAS_POLL_TIMEOUT,
     MAX_RETRIES,
     RETRY_BACKOFF_BASE,
-    API_DELAY_SECONDS
+    ENRICHMENT_WORKERS
 )
 from .db_logger import PipelineRun
+
+
+# Thread-safe counter for progress tracking
+class ProgressCounter:
+    def __init__(self):
+        self.count = 0
+        self.emails_found = 0
+        self.lock = threading.Lock()
+
+    def increment(self, found_email: bool = False):
+        with self.lock:
+            self.count += 1
+            if found_email:
+                self.emails_found += 1
+            return self.count, self.emails_found
 
 
 def enrich_with_emails(
@@ -24,7 +41,7 @@ def enrich_with_emails(
     pipeline_run: PipelineRun
 ) -> List[Dict[str, Any]]:
     """
-    Enrich leads with email addresses using Icypeas single search.
+    Enrich leads with email addresses using Icypeas with parallel processing.
 
     Args:
         leads: List of lead dictionaries with name and domain
@@ -36,11 +53,12 @@ def enrich_with_emails(
     stage_id = pipeline_run.start_stage('enrich', input_count=len(leads))
 
     errors = []
-    emails_found = 0
+    progress = ProgressCounter()
 
-    print(f'Enriching {len(leads)} leads with email addresses...')
+    print(f'Enriching {len(leads)} leads with email addresses using {ENRICHMENT_WORKERS} workers...')
 
-    for i, lead in enumerate(leads):
+    def enrich_single_lead(lead: Dict[str, Any]) -> Dict[str, Any]:
+        """Enrich a single lead (runs in thread pool)."""
         first_name = lead.get('person_first_name', '')
         last_name = lead.get('person_last_name', '')
         domain = lead.get('company_domain', '')
@@ -49,7 +67,8 @@ def enrich_with_emails(
         if not domain or (not first_name and not last_name):
             lead['email'] = None
             lead['email_certainty'] = None
-            continue
+            progress.increment(False)
+            return lead
 
         try:
             # Search for email
@@ -58,11 +77,17 @@ def enrich_with_emails(
             if email_result:
                 lead['email'] = email_result.get('email')
                 lead['email_certainty'] = email_result.get('certainty')
-                if lead['email']:
-                    emails_found += 1
+                found = bool(lead['email'])
             else:
                 lead['email'] = None
                 lead['email_certainty'] = None
+                found = False
+
+            count, emails_found = progress.increment(found)
+
+            # Progress logging every 10 leads
+            if count % 10 == 0 or count == len(leads):
+                print(f'  Processed {count}/{len(leads)} leads, found {emails_found} emails')
 
         except Exception as e:
             lead['email'] = None
@@ -72,20 +97,25 @@ def enrich_with_emails(
                 'domain': domain,
                 'error': str(e)
             })
-            pipeline_run.log_error(
-                'enrich',
-                'SEARCH_ERROR',
-                f"Failed to enrich {lead.get('person_name')}: {e}",
-                {'domain': domain}
-            )
+            progress.increment(False)
 
-        # Progress logging
-        if (i + 1) % 10 == 0 or (i + 1) == len(leads):
-            print(f'  Processed {i + 1}/{len(leads)} leads, found {emails_found} emails')
+        return lead
 
-        # Rate limiting between requests
-        if i < len(leads) - 1:
-            time.sleep(API_DELAY_SECONDS)
+    # Process leads in parallel
+    with ThreadPoolExecutor(max_workers=ENRICHMENT_WORKERS) as executor:
+        # Submit all tasks
+        future_to_lead = {executor.submit(enrich_single_lead, lead): lead for lead in leads}
+
+        # Wait for all to complete
+        for future in as_completed(future_to_lead):
+            try:
+                future.result()
+            except Exception as e:
+                lead = future_to_lead[future]
+                errors.append({
+                    'lead': lead.get('person_name'),
+                    'error': str(e)
+                })
 
     # Mark all found emails as verified (skip verification step)
     for lead in leads:
@@ -96,6 +126,15 @@ def enrich_with_emails(
 
     success_count = sum(1 for l in leads if l.get('email'))
     print(f'Enrichment complete: {success_count}/{len(leads)} leads with emails found')
+
+    # Log errors to pipeline
+    for error in errors:
+        pipeline_run.log_error(
+            'enrich',
+            'SEARCH_ERROR',
+            f"Failed to enrich {error.get('lead')}: {error.get('error')}",
+            {'domain': error.get('domain')}
+        )
 
     pipeline_run.complete_stage(
         stage_id,
@@ -153,12 +192,10 @@ def single_email_search(
                         return poll_single_search_result(item_id)
 
             elif response.status_code == 429:
-                # Rate limited, wait and retry
+                # Rate limited, wait and retry with backoff
                 wait_time = RETRY_BACKOFF_BASE ** (attempt + 1)
                 time.sleep(wait_time)
                 continue
-            else:
-                print(f'    Icypeas API error: {response.status_code}')
 
         except requests.exceptions.Timeout:
             if attempt < MAX_RETRIES - 1:
@@ -175,7 +212,7 @@ def single_email_search(
 
 def poll_single_search_result(item_id: str) -> Optional[Dict[str, Any]]:
     """
-    Poll for a single search result.
+    Poll for a single search result with exponential backoff.
 
     Args:
         item_id: The search item ID
@@ -189,10 +226,10 @@ def poll_single_search_result(item_id: str) -> Optional[Dict[str, Any]]:
     }
 
     start_time = time.time()
+    poll_interval = ICYPEAS_POLL_INTERVAL  # Start at 5s
 
     while time.time() - start_time < ICYPEAS_POLL_TIMEOUT:
         try:
-            # Use bulk-single-searchs/read endpoint (works for both single and bulk)
             response = requests.post(
                 f'{ICYPEAS_BASE_URL}/bulk-single-searchs/read',
                 headers=headers,
@@ -203,7 +240,6 @@ def poll_single_search_result(item_id: str) -> Optional[Dict[str, Any]]:
             if response.status_code == 200:
                 result = response.json()
 
-                # Response returns items array
                 if result.get('success') and result.get('items'):
                     items = result['items']
                     if items:
@@ -224,10 +260,12 @@ def poll_single_search_result(item_id: str) -> Optional[Dict[str, Any]]:
                                 }
                             return None
 
-            time.sleep(ICYPEAS_POLL_INTERVAL)
+            time.sleep(poll_interval)
+            # Exponential backoff: 5s -> 7s -> 10s -> 15s (capped)
+            poll_interval = min(poll_interval * 1.5, 15)
 
         except Exception:
-            time.sleep(ICYPEAS_POLL_INTERVAL)
+            time.sleep(poll_interval)
 
     return None
 
@@ -241,135 +279,3 @@ def certainty_score(certainty: str) -> int:
         'maybe': 1,
     }
     return scores.get(certainty, 0)
-
-
-def verify_emails(
-    leads: List[Dict[str, Any]],
-    pipeline_run: PipelineRun
-) -> List[Dict[str, Any]]:
-    """
-    Verify email addresses using Icypeas single verification.
-
-    Args:
-        leads: List of leads with email addresses
-        pipeline_run: PipelineRun instance for logging
-
-    Returns:
-        Leads with verification status added
-    """
-    leads_with_emails = [l for l in leads if l.get('email')]
-
-    if not leads_with_emails:
-        return leads
-
-    print(f'  Verifying {len(leads_with_emails)} emails...')
-
-    for i, lead in enumerate(leads_with_emails):
-        try:
-            is_valid = single_email_verify(lead['email'])
-            lead['email_verified'] = is_valid
-        except Exception as e:
-            lead['email_verified'] = False
-            pipeline_run.log_error(
-                'enrich',
-                'VERIFY_ERROR',
-                f"Failed to verify {lead['email']}: {e}"
-            )
-
-        # Rate limiting
-        if i < len(leads_with_emails) - 1:
-            time.sleep(API_DELAY_SECONDS)
-
-    return leads
-
-
-def single_email_verify(email: str) -> bool:
-    """
-    Verify a single email address.
-
-    Args:
-        email: Email address to verify
-
-    Returns:
-        True if valid, False otherwise
-    """
-    headers = {
-        'Authorization': ICYPEAS_API_KEY,
-        'Content-Type': 'application/json'
-    }
-
-    payload = {
-        'email': email
-    }
-
-    for attempt in range(MAX_RETRIES):
-        try:
-            response = requests.post(
-                f'{ICYPEAS_BASE_URL}/email-verification',
-                headers=headers,
-                json=payload,
-                timeout=30
-            )
-
-            if response.status_code == 200:
-                result = response.json()
-                if result.get('success'):
-                    item_id = result.get('item', {}).get('_id')
-                    if item_id:
-                        return poll_single_verify_result(item_id)
-
-        except Exception:
-            if attempt < MAX_RETRIES - 1:
-                time.sleep(RETRY_BACKOFF_BASE ** (attempt + 1))
-            continue
-
-    return False
-
-
-def poll_single_verify_result(item_id: str) -> bool:
-    """
-    Poll for a single verification result.
-
-    Args:
-        item_id: The verification item ID
-
-    Returns:
-        True if email is valid, False otherwise
-    """
-    headers = {
-        'Authorization': ICYPEAS_API_KEY,
-        'Content-Type': 'application/json'
-    }
-
-    start_time = time.time()
-
-    while time.time() - start_time < ICYPEAS_POLL_TIMEOUT:
-        try:
-            # Use bulk-single-searchs/read endpoint (works for both single and bulk)
-            response = requests.post(
-                f'{ICYPEAS_BASE_URL}/bulk-single-searchs/read',
-                headers=headers,
-                json={'id': item_id},
-                timeout=30
-            )
-
-            if response.status_code == 200:
-                result = response.json()
-
-                # Response returns items array
-                if result.get('success') and result.get('items'):
-                    items = result['items']
-                    if items:
-                        item = items[0]
-                        status = item.get('status')
-
-                        if status in ['DEBITED', 'FOUND', 'NO_RESULT', 'ERROR']:
-                            results_data = item.get('results', {})
-                            return results_data.get('valid', False)
-
-            time.sleep(ICYPEAS_POLL_INTERVAL)
-
-        except Exception:
-            time.sleep(ICYPEAS_POLL_INTERVAL)
-
-    return False
