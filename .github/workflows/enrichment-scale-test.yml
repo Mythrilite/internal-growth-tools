@@ -38,8 +38,7 @@ jobs:
           ICYPEAS_API_KEY: ${{ secrets.ICYPEAS_API_KEY }}
           ICYPEAS_USER_ID: ${{ secrets.ICYPEAS_USER_ID }}
         run: |
-          python scripts/pipeline/test_enrichment_scale.py ${{ github.event.inputs.test_size }} > enrichment_test_output.log 2>&1
-          cat enrichment_test_output.log
+          python scripts/pipeline/test_enrichment_scale.py ${{ github.event.inputs.test_size || '1000' }} 2>&1 | tee enrichment_test_output.log
 
       - name: Post results to Discord
         if: always()

@@ -110,4 +110,15 @@ def validate_config():
 
 def get_job_count(test_mode: bool = False) -> int:
     """Get the number of jobs to scrape based on mode."""
-    return TEST_JOB_COUNT if test_mode else DEFAULT_JOB_COUNT
+    if test_mode:
+        return TEST_JOB_COUNT
+    
+    # Check if custom job count is set via environment
+    custom_count = os.getenv('CUSTOM_JOB_COUNT')
+    if custom_count:
+        try:
+            return int(custom_count)
+        except ValueError:
+            pass
+    
+    return DEFAULT_JOB_COUNT

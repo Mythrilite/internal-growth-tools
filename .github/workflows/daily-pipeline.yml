@@ -10,10 +10,24 @@ on:
   workflow_dispatch:
     inputs:
       test_mode:
-        description: 'Run in test mode (100 jobs instead of 10,000)'
+        description: 'Run in test mode'
         required: false
         default: 'false'
-        type: boolean
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+      job_count:
+        description: 'Number of jobs to scrape (only used if not test mode)'
+        required: false
+        default: '10000'
+        type: choice
+        options:
+          - '100'
+          - '500'
+          - '1000'
+          - '5000'
+          - '10000'
 
 jobs:
   run-pipeline:
@@ -46,6 +60,7 @@ jobs:
           ICYPEAS_USER_ID: ${{ secrets.ICYPEAS_USER_ID }}
           INSTANTLY_API_KEY: ${{ secrets.INSTANTLY_API_KEY }}
           PROSP_API_KEY: ${{ secrets.PROSP_API_KEY }}
+          CUSTOM_JOB_COUNT: ${{ github.event.inputs.job_count }}
         run: |
           if [ "${{ github.event.inputs.test_mode }}" == "true" ]; then
             python scripts/pipeline/daily_lead_pipeline.py --test > pipeline_output.log 2>&1
