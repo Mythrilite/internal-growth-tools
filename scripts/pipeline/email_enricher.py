@@ -347,7 +347,7 @@ def fetch_bulk_results(
     Args:
         file_id: The bulk search file ID
         headers: Request headers with auth
-        lead_keys: List of (firstname, lastname, domain) keys for matching
+        lead_keys: List of (firstname, lastname, domain) keys for matching in order
 
     Returns:
         Dictionary mapping keys to email results
@@ -385,25 +385,34 @@ def fetch_bulk_results(
                     
                     if page == 1:
                         print(f'      Fetching results: got {len(items)} items on page 1')
+                        if items:
+                            print(f'      First item keys: {list(items[0].keys())}')
 
                     for item in items:
-                        # Extract search parameters
-                        firstname = (item.get('firstname') or '').lower()
-                        lastname = (item.get('lastname') or '').lower()
-                        domain = (item.get('domainOrCompany') or item.get('domain') or '').lower()
+                        # Use order field to match back to original lead
+                        # order field tells us which row in the data array this result is for
+                        order = item.get('order', -1)
+                        
+                        if order >= 0 and order < len(lead_keys):
+                            # Get the original lead key by position
+                            key = lead_keys[order]
+                            
+                            # Get email results from the results object
+                            results_data = item.get('results', {})
+                            emails = results_data.get('emails', [])
 
-                        # Get email results
-                        results_data = item.get('results', {})
-                        emails = results_data.get('emails', [])
-
-                        if emails:
-                            # Get best email by certainty
-                            best = max(emails, key=lambda e: certainty_score(e.get('certainty', '')))
-                            key = (firstname, lastname, domain)
-                            results[key] = {
-                                'email': best.get('email'),
-                                'certainty': best.get('certainty')
-                            }
+                            if emails:
+                                # Get best email by certainty
+                                best = max(emails, key=lambda e: certainty_score(e.get('certainty', '')))
+                                results[key] = {
+                                    'email': best.get('email'),
+                                    'certainty': best.get('certainty')
+                                }
+                            
+                            if page == 1 and len(results) <= 3:
+                                # Debug: show what we're extracting
+                                found_name = item.get('results', {}).get('fullname', 'N/A')
+                                print(f'        Result #{order}: key={key}, found_name={found_name}, has_emails={bool(emails)}')
 
                     # Check for more pages
                     if len(items) < 100:
