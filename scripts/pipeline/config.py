@@ -64,7 +64,7 @@ ICYPEAS_BASE_URL = 'https://app.icypeas.com/api'
 ICYPEAS_USER_ID = os.getenv('ICYPEAS_USER_ID', '')  # User ID for bulk search API
 ICYPEAS_BATCH_SIZE = 5000  # Max items per bulk request
 ICYPEAS_POLL_INTERVAL = 5  # Seconds between status checks
-ICYPEAS_POLL_TIMEOUT = 900  # Max seconds to wait for results (increased from 600 to 900)
+ICYPEAS_POLL_TIMEOUT = 1800  # Max seconds to wait for results (30 minutes for bulk searches with many items)
 
 # Campaign Configuration
 INSTANTLY_CAMPAIGN_ID = '13c27967-c1d6-4a3a-9262-9bddb81745bc'

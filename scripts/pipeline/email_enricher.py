@@ -323,8 +323,8 @@ def poll_bulk_completion(
                 print(f'      Poll #{poll_count} returned {response.status_code} after {elapsed}s: {response.text[:150]}')
 
             time.sleep(poll_interval)
-            # Gradual backoff: 5s -> 7s -> 10s -> 15s -> 20s (capped)
-            poll_interval = min(poll_interval * 1.4, 20)
+            # Gradual backoff: 5s -> 7s -> 10s -> 15s -> 20s -> 30s -> 60s (capped)
+            poll_interval = min(poll_interval * 1.4, 60)
 
         except Exception as e:
             elapsed = int(time.time() - start_time)
