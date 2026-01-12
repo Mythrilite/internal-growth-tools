@@ -1,12 +1,15 @@
 """
 Decision Maker Search module using Exa AI.
 Finds CTOs, Heads of Engineering, and similar roles at target companies.
+Uses parallel processing for faster execution.
 """
 
 import re
 import time
 from typing import List, Dict, Any, Optional, Tuple
 from exa_py import Exa
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 import requests
 import json
@@ -15,12 +18,14 @@ from .config import (
     EXA_API_KEY,
     EXA_SEARCH_LIMIT,
     EXA_API_DELAY,
+    EXA_WORKERS,
     MAX_RETRIES,
     RETRY_BACKOFF_BASE,
     OPENROUTER_API_KEY,
     OPENROUTER_BASE_URL,
     LLM_MODEL,
-    LLM_VALIDATION_ENABLED
+    LLM_VALIDATION_ENABLED,
+    MAX_COMPANIES_PER_RUN
 )
 from .db_logger import PipelineRun
 
@@ -68,6 +73,28 @@ TITLE_PATTERNS = [
 ]
 
 LINKEDIN_URL_PATTERN = re.compile(r'linkedin\.com/in/([a-zA-Z0-9_-]+)')
+
+
+# Thread-safe counter for progress tracking
+class SearchProgressCounter:
+    def __init__(self, total: int):
+        self.total = total
+        self.completed = 0
+        self.with_results = 0
+        self.people_found = 0
+        self.lock = threading.Lock()
+
+    def increment(self, found_count: int = 0):
+        with self.lock:
+            self.completed += 1
+            if found_count > 0:
+                self.with_results += 1
+                self.people_found += found_count
+            return self.completed
+
+    def get_stats(self):
+        with self.lock:
+            return self.completed, self.with_results, self.people_found
 
 
 LLM_VALIDATION_PROMPT = """You are validating if a person from a search result is a valid lead for B2B outreach.
@@ -169,6 +196,7 @@ def search_decision_makers(
 ) -> List[Dict[str, Any]]:
     """
     Search for CTOs and engineering leaders at each company using Exa AI.
+    Uses parallel processing for faster execution.
 
     Args:
         companies: List of company dictionaries with domain info
@@ -177,26 +205,31 @@ def search_decision_makers(
     Returns:
         List of decision maker dictionaries with company and person info
     """
+    # Apply cap to prevent runaway execution
+    if len(companies) > MAX_COMPANIES_PER_RUN:
+        print(f'Capping companies from {len(companies)} to {MAX_COMPANIES_PER_RUN}')
+        companies = companies[:MAX_COMPANIES_PER_RUN]
+
     stage_id = pipeline_run.start_stage('search', input_count=len(companies))
 
-    exa = Exa(api_key=EXA_API_KEY)
-    decision_makers = []
-    errors = []
-    companies_with_results = 0
+    all_decision_makers = []
+    all_errors = []
+    results_lock = threading.Lock()
+    progress = SearchProgressCounter(len(companies))
 
-    print(f'Searching for decision makers at {len(companies)} companies...')
-    import sys
-    sys.stdout.flush()
+    print(f'Searching for decision makers at {len(companies)} companies using {EXA_WORKERS} workers...')
 
-    for i, company in enumerate(companies):
+    def search_single_company(company: Dict[str, Any], index: int) -> None:
+        """Search for decision makers at a single company (runs in thread pool)."""
+        # Each thread gets its own Exa client
+        exa = Exa(api_key=EXA_API_KEY)
+
         domain = company.get('company_domain')
         company_name = company.get('company_name')
 
         if not domain:
-            continue
-
-        print(f'  [{i+1}/{len(companies)}] Searching {company_name}...', end=' ')
-        sys.stdout.flush()
+            progress.increment(0)
+            return
 
         try:
             # Use people category search with expanded query for better coverage
@@ -215,70 +248,75 @@ def search_decision_makers(
                 except Exception as e:
                     if attempt < MAX_RETRIES - 1:
                         wait_time = RETRY_BACKOFF_BASE ** (attempt + 1)
-                        print(f'retry in {wait_time}s ({str(e)[:40]})', end=' ')
-                        sys.stdout.flush()
                         time.sleep(wait_time)
                     else:
                         raise
 
+            found_people = []
             if results and results.results:
                 found_people = parse_people_search_results(results.results, company)
 
                 if found_people:
-                    # Validate with LLM before adding
+                    # Validate with LLM before adding (if enabled)
                     if LLM_VALIDATION_ENABLED and OPENROUTER_API_KEY:
-                        pre_count = len(found_people)
                         found_people = validate_leads_with_llm(found_people, company)
-                        print(f'found {pre_count} → {len(found_people)} after LLM validation')
-                    else:
-                        print(f'found {len(found_people)} people')
 
-                    if found_people:
-                        companies_with_results += 1
-                        decision_makers.extend(found_people)
-                else:
-                    print('no matches')
-            else:
-                print('no results')
+            # Thread-safe append results
+            with results_lock:
+                if found_people:
+                    all_decision_makers.extend(found_people)
 
-            sys.stdout.flush()
+            count = progress.increment(len(found_people))
 
-            # Rate limiting
+            # Progress logging every 20 companies
+            if count % 20 == 0 or count == len(companies):
+                completed, with_results, total_people = progress.get_stats()
+                print(f'  Progress: {completed}/{len(companies)} companies searched, {total_people} people found')
+
+            # Small delay to avoid rate limiting
             time.sleep(EXA_API_DELAY)
 
         except Exception as e:
-            print(f'ERROR: {e}')
-            error_msg = f'Error searching {domain}: {str(e)}'
-            errors.append({
-                'company': company_name,
-                'domain': domain,
-                'error': str(e)
-            })
+            with results_lock:
+                all_errors.append({
+                    'company': company_name,
+                    'domain': domain,
+                    'error': str(e)
+                })
+            progress.increment(0)
             pipeline_run.log_error(
                 'search',
                 'API_ERROR',
-                error_msg,
+                f'Error searching {domain}: {str(e)}',
                 {'company': company_name, 'domain': domain}
             )
 
-    print(f'\nSearch complete:')
-    print(f'  Companies searched: {len(companies)}')
-    print(f'  Companies with results: {companies_with_results}')
-    print(f'  Decision makers found: {len(decision_makers)}')
-    print(f'  Errors: {len(errors)}')
-    sys.stdout.flush()
+    # Process companies in parallel
+    with ThreadPoolExecutor(max_workers=EXA_WORKERS) as executor:
+        futures = {executor.submit(search_single_company, company, i): company
+                   for i, company in enumerate(companies)}
 
-    print('Completing search stage...')
-    sys.stdout.flush()
+        for future in as_completed(futures):
+            try:
+                future.result()
+            except Exception:
+                pass  # Errors already tracked in search_single_company
+
+    completed, with_results, total_people = progress.get_stats()
+    print(f'\nSearch complete:')
+    print(f'  Companies searched: {completed}')
+    print(f'  Companies with results: {with_results}')
+    print(f'  Decision makers found: {len(all_decision_makers)}')
+    print(f'  Errors: {len(all_errors)}')
 
     pipeline_run.complete_stage(
         stage_id,
-        output_count=len(decision_makers),
-        error_count=len(errors),
-        error_details=errors if errors else None
+        output_count=len(all_decision_makers),
+        error_count=len(all_errors),
+        error_details=all_errors if all_errors else None
     )
 
-    return decision_makers
+    return all_decision_makers
 
 
 def parse_people_search_results(
@@ -364,73 +402,6 @@ def parse_people_search_results(
             'company_domain': company.get('company_domain'),
             'company_website': company.get('company_website'),
             'job_title': company.get('job_title'),
-            'employee_count': company.get('employee_count'),
-            'location': company.get('location'),
-            # Person info
-            'person_name': person_name,
-            'person_first_name': first_name,
-            'person_last_name': last_name,
-            'person_title': person_title or extract_title_from_text(title),
-            'linkedin_url': linkedin_url,
-            'source_url': url,
-            'source_title': title,
-        })
-
-    return found_people
-
-
-def parse_search_results(
-    results: List[Any],
-    company: Dict[str, Any]
-) -> List[Dict[str, Any]]:
-    """
-    Parse Exa search results to extract decision maker information (legacy).
-
-    Args:
-        results: List of Exa search results
-        company: Company dictionary for context
-
-    Returns:
-        List of decision maker dictionaries
-    """
-    found_people = []
-    seen_linkedin_urls = set()
-
-    for result in results:
-        url = getattr(result, 'url', '')
-        title = getattr(result, 'title', '')
-
-        # Check if this is a LinkedIn profile
-        linkedin_match = LINKEDIN_URL_PATTERN.search(url)
-        linkedin_url = None
-
-        if linkedin_match:
-            linkedin_url = f"https://www.linkedin.com/in/{linkedin_match.group(1)}"
-
-            # Skip duplicates
-            if linkedin_url in seen_linkedin_urls:
-                continue
-            seen_linkedin_urls.add(linkedin_url)
-
-        # Try to extract name and title from the result
-        person_name, person_title = extract_person_info(title, url)
-
-        # Only include if we found a relevant title
-        if not is_decision_maker_title(title) and not is_decision_maker_title(person_title):
-            continue
-
-        # Skip if no name could be extracted
-        if not person_name:
-            continue
-
-        first_name, last_name = split_name(person_name)
-
-        found_people.append({
-            # Company info
-            'company_name': company.get('company_name'),
-            'company_domain': company.get('company_domain'),
-            'company_website': company.get('company_website'),
-            'job_title': company.get('job_title'),  # The role the company is hiring for
             'employee_count': company.get('employee_count'),
             'location': company.get('location'),
             # Person info

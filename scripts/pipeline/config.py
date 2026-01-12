@@ -37,8 +37,12 @@ LINKEDIN_JOB_URL = (
     'keywords=software%20engineer&'
     'origin=JOB_SEARCH_PAGE_KEYWORD_AUTOCOMPLETE&refresh=true'
 )
-DEFAULT_JOB_COUNT = 10000
+DEFAULT_JOB_COUNT = 2000  # Reduced from 10000 for faster pipeline runs
 TEST_JOB_COUNT = 100
+
+# Pipeline Caps (prevent runaway execution time)
+MAX_COMPANIES_PER_RUN = 200  # Max companies to search in Stage 3
+MAX_LEADS_PER_RUN = 500  # Max leads to enrich in Stage 4
 
 # Company Filter Configuration
 MIN_EMPLOYEES = 11
@@ -47,12 +51,13 @@ ALLOWED_COUNTRIES = ['US', 'CA', 'GB', 'AU']  # Added Canada, UK, Australia
 
 # Exa AI Configuration
 EXA_SEARCH_LIMIT = 25  # Increased from 10 for more results per company
-EXA_API_DELAY = 0.3  # Reduced from 0.5 for faster processing
+EXA_API_DELAY = 0.1  # Minimal delay - rate limiting handled by parallel workers
+EXA_WORKERS = 10  # Number of parallel workers for Exa search
 
 # LLM Validation Configuration
 OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1'
 LLM_MODEL = 'google/gemini-2.0-flash-001'  # Fast and cheap for validation
-LLM_VALIDATION_ENABLED = True  # Set to False to skip LLM validation
+LLM_VALIDATION_ENABLED = False  # Disabled by default - adds significant overhead
 
 # Icypeas Configuration
 ICYPEAS_BASE_URL = 'https://app.icypeas.com/api'

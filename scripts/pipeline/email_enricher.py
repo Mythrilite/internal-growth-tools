@@ -16,7 +16,8 @@ from .config import (
     ICYPEAS_POLL_TIMEOUT,
     MAX_RETRIES,
     RETRY_BACKOFF_BASE,
-    ENRICHMENT_WORKERS
+    ENRICHMENT_WORKERS,
+    MAX_LEADS_PER_RUN
 )
 from .db_logger import PipelineRun
 
@@ -50,6 +51,11 @@ def enrich_with_emails(
     Returns:
         List of leads with email information added
     """
+    # Apply cap to prevent runaway execution
+    if len(leads) > MAX_LEADS_PER_RUN:
+        print(f'Capping leads from {len(leads)} to {MAX_LEADS_PER_RUN}')
+        leads = leads[:MAX_LEADS_PER_RUN]
+
     stage_id = pipeline_run.start_stage('enrich', input_count=len(leads))
 
     errors = []
