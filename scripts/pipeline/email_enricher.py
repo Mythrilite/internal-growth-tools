@@ -1,40 +1,24 @@
 """
 Email Enricher module using Icypeas API.
-Uses parallel processing for faster enrichment.
+Uses bulk search for faster enrichment (single API call for all leads).
 """
 
 import time
 import requests
-from typing import List, Dict, Any, Optional
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import threading
+from typing import List, Dict, Any, Optional, Tuple
+from datetime import datetime
 
 from .config import (
     ICYPEAS_API_KEY,
     ICYPEAS_BASE_URL,
     ICYPEAS_POLL_INTERVAL,
     ICYPEAS_POLL_TIMEOUT,
+    ICYPEAS_BATCH_SIZE,
     MAX_RETRIES,
     RETRY_BACKOFF_BASE,
-    ENRICHMENT_WORKERS,
     MAX_LEADS_PER_RUN
 )
 from .db_logger import PipelineRun
-
-
-# Thread-safe counter for progress tracking
-class ProgressCounter:
-    def __init__(self):
-        self.count = 0
-        self.emails_found = 0
-        self.lock = threading.Lock()
-
-    def increment(self, found_email: bool = False):
-        with self.lock:
-            self.count += 1
-            if found_email:
-                self.emails_found += 1
-            return self.count, self.emails_found
 
 
 def enrich_with_emails(
@@ -42,7 +26,7 @@ def enrich_with_emails(
     pipeline_run: PipelineRun
 ) -> List[Dict[str, Any]]:
     """
-    Enrich leads with email addresses using Icypeas with parallel processing.
+    Enrich leads with email addresses using Icypeas bulk search.
 
     Args:
         leads: List of lead dictionaries with name and domain
@@ -58,89 +42,66 @@ def enrich_with_emails(
 
     stage_id = pipeline_run.start_stage('enrich', input_count=len(leads))
 
-    errors = []
-    progress = ProgressCounter()
+    print(f'Enriching {len(leads)} leads with email addresses using bulk search...')
 
-    print(f'Enriching {len(leads)} leads with email addresses using {ENRICHMENT_WORKERS} workers...')
+    # Prepare leads for bulk search
+    valid_leads = []
+    skipped_leads = []
 
-    def enrich_single_lead(lead: Dict[str, Any]) -> Dict[str, Any]:
-        """Enrich a single lead (runs in thread pool)."""
+    for lead in leads:
         first_name = lead.get('person_first_name', '')
         last_name = lead.get('person_last_name', '')
         domain = lead.get('company_domain', '')
 
-        # Skip if missing required data
-        if not domain or (not first_name and not last_name):
-            lead['email'] = None
-            lead['email_certainty'] = None
-            progress.increment(False)
-            return lead
-
-        try:
-            # Search for email
-            email_result = single_email_search(first_name, last_name, domain)
-
-            if email_result:
-                lead['email'] = email_result.get('email')
-                lead['email_certainty'] = email_result.get('certainty')
-                found = bool(lead['email'])
-            else:
-                lead['email'] = None
-                lead['email_certainty'] = None
-                found = False
-
-            count, emails_found = progress.increment(found)
-
-            # Progress logging every 10 leads
-            if count % 10 == 0 or count == len(leads):
-                print(f'  Processed {count}/{len(leads)} leads, found {emails_found} emails')
-
-        except Exception as e:
-            lead['email'] = None
-            lead['email_certainty'] = None
-            errors.append({
-                'lead': lead.get('person_name'),
-                'domain': domain,
-                'error': str(e)
-            })
-            progress.increment(False)
-
-        return lead
-
-    # Process leads in parallel
-    with ThreadPoolExecutor(max_workers=ENRICHMENT_WORKERS) as executor:
-        # Submit all tasks
-        future_to_lead = {executor.submit(enrich_single_lead, lead): lead for lead in leads}
-
-        # Wait for all to complete
-        for future in as_completed(future_to_lead):
-            try:
-                future.result()
-            except Exception as e:
-                lead = future_to_lead[future]
-                errors.append({
-                    'lead': lead.get('person_name'),
-                    'error': str(e)
-                })
-
-    # Mark all found emails as verified (skip verification step)
-    for lead in leads:
-        if lead.get('email'):
-            lead['email_verified'] = True
+        if domain and (first_name or last_name):
+            valid_leads.append(lead)
         else:
+            # Skip leads missing required data
+            lead['email'] = None
+            lead['email_certainty'] = None
+            lead['email_verified'] = False
+            skipped_leads.append(lead)
+
+    if skipped_leads:
+        print(f'  Skipped {len(skipped_leads)} leads missing required data')
+
+    if not valid_leads:
+        print('No valid leads to enrich')
+        pipeline_run.complete_stage(stage_id, output_count=0, error_count=len(skipped_leads))
+        return leads
+
+    # Run bulk search
+    try:
+        email_results = bulk_email_search(valid_leads, pipeline_run)
+        errors = []
+    except Exception as e:
+        print(f'Bulk search failed: {e}')
+        pipeline_run.log_error('enrich', 'BULK_SEARCH_ERROR', str(e))
+        email_results = {}
+        errors = [{'error': str(e), 'type': 'bulk_search_failure'}]
+
+    # Match results back to leads
+    success_count = 0
+    for lead in valid_leads:
+        first_name = lead.get('person_first_name', '')
+        last_name = lead.get('person_last_name', '')
+        domain = lead.get('company_domain', '')
+
+        # Create lookup key (lowercase for matching)
+        key = (first_name.lower(), last_name.lower(), domain.lower())
+
+        result = email_results.get(key)
+        if result:
+            lead['email'] = result.get('email')
+            lead['email_certainty'] = result.get('certainty')
+            lead['email_verified'] = True
+            success_count += 1
+        else:
+            lead['email'] = None
+            lead['email_certainty'] = None
             lead['email_verified'] = False
 
-    success_count = sum(1 for l in leads if l.get('email'))
     print(f'Enrichment complete: {success_count}/{len(leads)} leads with emails found')
-
-    # Log errors to pipeline
-    for error in errors:
-        pipeline_run.log_error(
-            'enrich',
-            'SEARCH_ERROR',
-            f"Failed to enrich {error.get('lead')}: {error.get('error')}",
-            {'domain': error.get('domain')}
-        )
 
     pipeline_run.complete_stage(
         stage_id,
@@ -152,13 +113,302 @@ def enrich_with_emails(
     return leads
 
 
+def bulk_email_search(
+    leads: List[Dict[str, Any]],
+    pipeline_run: PipelineRun
+) -> Dict[Tuple[str, str, str], Dict[str, Any]]:
+    """
+    Perform bulk email search using Icypeas bulk API.
+
+    Args:
+        leads: List of lead dictionaries
+        pipeline_run: PipelineRun instance for logging
+
+    Returns:
+        Dictionary mapping (firstname, lastname, domain) -> {email, certainty}
+    """
+    headers = {
+        'Authorization': ICYPEAS_API_KEY,
+        'Content-Type': 'application/json'
+    }
+
+    # Prepare bulk data: [[firstname, lastname, domain], ...]
+    bulk_data = []
+    lead_keys = []  # Track keys for result matching
+
+    for lead in leads:
+        first_name = lead.get('person_first_name', '')
+        last_name = lead.get('person_last_name', '')
+        domain = lead.get('company_domain', '')
+
+        bulk_data.append([first_name, last_name, domain])
+        lead_keys.append((first_name.lower(), last_name.lower(), domain.lower()))
+
+    # Split into batches if needed (max 5000 per bulk search)
+    all_results = {}
+    batches = [bulk_data[i:i + ICYPEAS_BATCH_SIZE] for i in range(0, len(bulk_data), ICYPEAS_BATCH_SIZE)]
+    key_batches = [lead_keys[i:i + ICYPEAS_BATCH_SIZE] for i in range(0, len(lead_keys), ICYPEAS_BATCH_SIZE)]
+
+    for batch_num, (batch, keys) in enumerate(zip(batches, key_batches), 1):
+        print(f'  Submitting bulk search batch {batch_num}/{len(batches)} ({len(batch)} leads)...')
+
+        # Submit bulk search
+        file_id = submit_bulk_search(batch, headers)
+        if not file_id:
+            print(f'    Failed to submit batch {batch_num}')
+            continue
+
+        print(f'    Bulk search submitted, file ID: {file_id}')
+
+        # Poll for completion
+        print(f'    Waiting for bulk search to complete...')
+        if not poll_bulk_completion(file_id, headers, len(batch)):
+            print(f'    Bulk search timed out for batch {batch_num}')
+            continue
+
+        # Fetch results
+        print(f'    Fetching results...')
+        batch_results = fetch_bulk_results(file_id, headers, keys)
+        all_results.update(batch_results)
+
+        print(f'    Batch {batch_num} complete: {len(batch_results)} emails found')
+
+    return all_results
+
+
+def submit_bulk_search(data: List[List[str]], headers: Dict[str, str]) -> Optional[str]:
+    """
+    Submit a bulk email search request.
+
+    Args:
+        data: List of [firstname, lastname, domain] arrays
+        headers: Request headers with auth
+
+    Returns:
+        File ID for the bulk search, or None on failure
+    """
+    payload = {
+        'name': f'pipeline_bulk_{datetime.now().strftime("%Y%m%d_%H%M%S")}',
+        'task': 'email-search',
+        'data': data
+    }
+
+    for attempt in range(MAX_RETRIES):
+        try:
+            response = requests.post(
+                f'{ICYPEAS_BASE_URL}/bulk-search',
+                headers=headers,
+                json=payload,
+                timeout=60
+            )
+
+            if response.status_code == 200:
+                result = response.json()
+                if result.get('success'):
+                    return result.get('file')
+                else:
+                    print(f'    Bulk search submission failed: {result}')
+
+            elif response.status_code == 429:
+                wait_time = RETRY_BACKOFF_BASE ** (attempt + 1)
+                print(f'    Rate limited, waiting {wait_time}s...')
+                time.sleep(wait_time)
+                continue
+
+            else:
+                print(f'    Bulk search API error: {response.status_code} - {response.text}')
+
+        except requests.exceptions.Timeout:
+            if attempt < MAX_RETRIES - 1:
+                time.sleep(RETRY_BACKOFF_BASE ** (attempt + 1))
+            continue
+
+        except Exception as e:
+            print(f'    Bulk search request error: {e}')
+            if attempt < MAX_RETRIES - 1:
+                time.sleep(RETRY_BACKOFF_BASE ** (attempt + 1))
+            else:
+                raise
+
+    return None
+
+
+def poll_bulk_completion(
+    file_id: str,
+    headers: Dict[str, str],
+    total_items: int
+) -> bool:
+    """
+    Poll for bulk search completion.
+
+    Args:
+        file_id: The bulk search file ID
+        headers: Request headers with auth
+        total_items: Total number of items in the bulk search
+
+    Returns:
+        True if completed successfully, False on timeout
+    """
+    start_time = time.time()
+    poll_interval = ICYPEAS_POLL_INTERVAL
+    last_progress = 0
+
+    while time.time() - start_time < ICYPEAS_POLL_TIMEOUT:
+        try:
+            response = requests.post(
+                f'{ICYPEAS_BASE_URL}/search-files/read',
+                headers=headers,
+                json={'file': file_id},
+                timeout=30
+            )
+
+            if response.status_code == 200:
+                result = response.json()
+
+                if result.get('success') and result.get('items'):
+                    items = result['items']
+                    if items:
+                        item = items[0]
+                        status = item.get('status')
+                        finished = item.get('finished', False)
+                        progress = item.get('progress', 0)
+
+                        # Log progress updates
+                        if progress != last_progress:
+                            elapsed = int(time.time() - start_time)
+                            print(f'      Progress: {progress}/{total_items} ({elapsed}s elapsed)')
+                            last_progress = progress
+
+                        if status == 'done' or finished:
+                            return True
+
+            time.sleep(poll_interval)
+            # Gradual backoff: 5s -> 7s -> 10s -> 15s -> 20s (capped)
+            poll_interval = min(poll_interval * 1.4, 20)
+
+        except Exception as e:
+            print(f'      Poll error: {e}')
+            time.sleep(poll_interval)
+
+    return False
+
+
+def fetch_bulk_results(
+    file_id: str,
+    headers: Dict[str, str],
+    lead_keys: List[Tuple[str, str, str]]
+) -> Dict[Tuple[str, str, str], Dict[str, Any]]:
+    """
+    Fetch results from a completed bulk search.
+
+    Args:
+        file_id: The bulk search file ID
+        headers: Request headers with auth
+        lead_keys: List of (firstname, lastname, domain) keys for matching
+
+    Returns:
+        Dictionary mapping keys to email results
+    """
+    results = {}
+    has_more = True
+    sort_value = None
+    page = 0
+
+    while has_more:
+        try:
+            payload = {
+                'mode': 'bulk',
+                'file': file_id,
+                'limit': 100  # Max per request
+            }
+
+            if sort_value:
+                payload['sort'] = sort_value
+                payload['next'] = True
+
+            response = requests.post(
+                f'{ICYPEAS_BASE_URL}/bulk-single-searchs/read',
+                headers=headers,
+                json=payload,
+                timeout=60
+            )
+
+            if response.status_code == 200:
+                result = response.json()
+
+                if result.get('success') and result.get('items'):
+                    items = result['items']
+                    page += 1
+
+                    for item in items:
+                        # Extract search parameters
+                        firstname = (item.get('firstname') or '').lower()
+                        lastname = (item.get('lastname') or '').lower()
+                        domain = (item.get('domainOrCompany') or item.get('domain') or '').lower()
+
+                        # Get email results
+                        results_data = item.get('results', {})
+                        emails = results_data.get('emails', [])
+
+                        if emails:
+                            # Get best email by certainty
+                            best = max(emails, key=lambda e: certainty_score(e.get('certainty', '')))
+                            key = (firstname, lastname, domain)
+                            results[key] = {
+                                'email': best.get('email'),
+                                'certainty': best.get('certainty')
+                            }
+
+                    # Check for more pages
+                    if len(items) < 100:
+                        has_more = False
+                    else:
+                        # Get sort value for next page
+                        last_item = items[-1]
+                        sort_value = last_item.get('createdAt') or last_item.get('_id')
+                        if not sort_value:
+                            has_more = False
+
+                    if page % 5 == 0:
+                        print(f'      Fetched {len(results)} results so far (page {page})...')
+
+                else:
+                    has_more = False
+
+            elif response.status_code == 429:
+                time.sleep(2)
+                continue
+
+            else:
+                print(f'      Fetch results error: {response.status_code}')
+                has_more = False
+
+        except Exception as e:
+            print(f'      Fetch error: {e}')
+            has_more = False
+
+    return results
+
+
+def certainty_score(certainty: str) -> int:
+    """Convert certainty string to numeric score."""
+    scores = {
+        'ultra_sure': 4,
+        'sure': 3,
+        'likely': 2,
+        'maybe': 1,
+    }
+    return scores.get(certainty, 0)
+
+
+# Keep single search as fallback (not used in main flow)
 def single_email_search(
     first_name: str,
     last_name: str,
     domain: str
 ) -> Optional[Dict[str, Any]]:
     """
-    Search for a single email using Icypeas.
+    Search for a single email using Icypeas (fallback method).
 
     Args:
         first_name: Person's first name
@@ -181,7 +431,6 @@ def single_email_search(
 
     for attempt in range(MAX_RETRIES):
         try:
-            # Launch the search
             response = requests.post(
                 f'{ICYPEAS_BASE_URL}/email-search',
                 headers=headers,
@@ -194,11 +443,9 @@ def single_email_search(
                 if result.get('success'):
                     item_id = result.get('item', {}).get('_id')
                     if item_id:
-                        # Poll for result
                         return poll_single_search_result(item_id)
 
             elif response.status_code == 429:
-                # Rate limited, wait and retry with backoff
                 wait_time = RETRY_BACKOFF_BASE ** (attempt + 1)
                 time.sleep(wait_time)
                 continue
@@ -217,22 +464,14 @@ def single_email_search(
 
 
 def poll_single_search_result(item_id: str) -> Optional[Dict[str, Any]]:
-    """
-    Poll for a single search result with exponential backoff.
-
-    Args:
-        item_id: The search item ID
-
-    Returns:
-        Dict with email and certainty, or None
-    """
+    """Poll for a single search result."""
     headers = {
         'Authorization': ICYPEAS_API_KEY,
         'Content-Type': 'application/json'
     }
 
     start_time = time.time()
-    poll_interval = ICYPEAS_POLL_INTERVAL  # Start at 5s
+    poll_interval = ICYPEAS_POLL_INTERVAL
 
     while time.time() - start_time < ICYPEAS_POLL_TIMEOUT:
         try:
@@ -253,12 +492,10 @@ def poll_single_search_result(item_id: str) -> Optional[Dict[str, Any]]:
                         status = item.get('status')
 
                         if status in ['DEBITED', 'FOUND', 'NO_RESULT', 'ERROR']:
-                            # Search complete
                             results_data = item.get('results', {})
                             emails = results_data.get('emails', [])
 
                             if emails:
-                                # Return best email
                                 best = max(emails, key=lambda e: certainty_score(e.get('certainty', '')))
                                 return {
                                     'email': best.get('email'),
@@ -267,21 +504,9 @@ def poll_single_search_result(item_id: str) -> Optional[Dict[str, Any]]:
                             return None
 
             time.sleep(poll_interval)
-            # Exponential backoff: 5s -> 7s -> 10s -> 15s (capped)
             poll_interval = min(poll_interval * 1.5, 15)
 
         except Exception:
             time.sleep(poll_interval)
 
     return None
-
-
-def certainty_score(certainty: str) -> int:
-    """Convert certainty string to numeric score."""
-    scores = {
-        'ultra_sure': 4,
-        'sure': 3,
-        'likely': 2,
-        'maybe': 1,
-    }
-    return scores.get(certainty, 0)

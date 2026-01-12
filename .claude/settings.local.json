@@ -7,11 +7,12 @@
       "WebFetch(domain:search.clado.ai)",
       "WebSearch",
       "WebFetch(domain:docs.clado.ai)",
-      "WebFetch(domain:docs.apollo.io)"
+      "WebFetch(domain:docs.apollo.io)",
+      "WebFetch(domain:api-doc.icypeas.com)"
     ]
   },
+  "enableAllProjectMcpServers": true,
   "enabledMcpjsonServers": [
     "notion"
-  ],
-  "enableAllProjectMcpServers": true
+  ]
 }
