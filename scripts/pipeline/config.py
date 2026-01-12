@@ -27,6 +27,7 @@ EXA_API_KEY = os.getenv('EXA_API_KEY', '')
 ICYPEAS_API_KEY = os.getenv('ICYPEAS_API_KEY', '')
 INSTANTLY_API_KEY = os.getenv('INSTANTLY_API_KEY', '')
 PROSP_API_KEY = os.getenv('PROSP_API_KEY', '')
+OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY', '')
 
 # LinkedIn Job Scraper Configuration
 LINKEDIN_SCRAPER_ACTOR = 'curious_coder/linkedin-jobs-scraper'
@@ -45,7 +46,13 @@ MAX_EMPLOYEES = 200
 ALLOWED_COUNTRIES = ['US']
 
 # Exa AI Configuration
-EXA_SEARCH_LIMIT = 25  # Max results per company search
+EXA_SEARCH_LIMIT = 10  # Max results per company search
+EXA_API_DELAY = 0.5  # Delay between Exa API calls (seconds)
+
+# LLM Validation Configuration
+OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1'
+LLM_MODEL = 'google/gemini-2.0-flash-001'  # Fast and cheap for validation
+LLM_VALIDATION_ENABLED = True  # Set to False to skip LLM validation
 
 # Icypeas Configuration
 ICYPEAS_BASE_URL = 'https://app.icypeas.com/api'

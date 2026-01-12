@@ -8,12 +8,19 @@ import time
 from typing import List, Dict, Any, Optional, Tuple
 from exa_py import Exa
 
+import requests
+import json
+
 from .config import (
     EXA_API_KEY,
     EXA_SEARCH_LIMIT,
-    API_DELAY_SECONDS,
+    EXA_API_DELAY,
     MAX_RETRIES,
-    RETRY_BACKOFF_BASE
+    RETRY_BACKOFF_BASE,
+    OPENROUTER_API_KEY,
+    OPENROUTER_BASE_URL,
+    LLM_MODEL,
+    LLM_VALIDATION_ENABLED
 )
 from .db_logger import PipelineRun
 
@@ -37,6 +44,99 @@ TITLE_PATTERNS = [
 ]
 
 LINKEDIN_URL_PATTERN = re.compile(r'linkedin\.com/in/([a-zA-Z0-9_-]+)')
+
+
+LLM_VALIDATION_PROMPT = """You are validating if a person from a search result is a valid lead for B2B outreach.
+
+TARGET COMPANY: {company_name}
+TARGET COMPANY DOMAIN: {company_domain}
+
+SEARCH RESULT:
+- Name: {person_name}
+- Title: {person_title}
+- LinkedIn URL: {linkedin_url}
+- Source Title: {source_title}
+
+VALIDATION CRITERIA:
+1. Person MUST work at the target company (company name appears in their profile)
+2. Person MUST have a decision-maker title: CTO, VP of Engineering, Head of Engineering, Director of Engineering, Technical Co-Founder, Founding Engineer
+3. Person MUST have a valid LinkedIn profile URL
+
+Respond with JSON only:
+{{"valid": true/false, "reason": "brief explanation"}}"""
+
+
+def validate_leads_with_llm(
+    leads: List[Dict[str, Any]],
+    company: Dict[str, Any]
+) -> List[Dict[str, Any]]:
+    """
+    Validate leads using LLM to filter out false positives.
+
+    Args:
+        leads: List of lead dictionaries from Exa search
+        company: Company dictionary for context
+
+    Returns:
+        List of validated leads
+    """
+    if not LLM_VALIDATION_ENABLED or not OPENROUTER_API_KEY:
+        return leads
+
+    if not leads:
+        return leads
+
+    validated = []
+
+    for lead in leads:
+        prompt = LLM_VALIDATION_PROMPT.format(
+            company_name=company.get('company_name', ''),
+            company_domain=company.get('company_domain', ''),
+            person_name=lead.get('person_name', ''),
+            person_title=lead.get('person_title', ''),
+            linkedin_url=lead.get('linkedin_url', ''),
+            source_title=lead.get('source_title', '')
+        )
+
+        try:
+            response = requests.post(
+                f'{OPENROUTER_BASE_URL}/chat/completions',
+                headers={
+                    'Authorization': f'Bearer {OPENROUTER_API_KEY}',
+                    'Content-Type': 'application/json'
+                },
+                json={
+                    'model': LLM_MODEL,
+                    'messages': [{'role': 'user', 'content': prompt}],
+                    'temperature': 0,
+                    'max_tokens': 100
+                },
+                timeout=10
+            )
+
+            if response.status_code == 200:
+                result = response.json()
+                content = result.get('choices', [{}])[0].get('message', {}).get('content', '')
+
+                # Parse JSON response
+                try:
+                    # Handle markdown code blocks
+                    if '```json' in content:
+                        content = content.split('```json')[1].split('```')[0]
+                    elif '```' in content:
+                        content = content.split('```')[1].split('```')[0]
+
+                    validation = json.loads(content.strip())
+                    if validation.get('valid', False):
+                        validated.append(lead)
+                except json.JSONDecodeError:
+                    # If we can't parse, include the lead (fail open)
+                    validated.append(lead)
+        except Exception:
+            # On error, include the lead (fail open)
+            validated.append(lead)
+
+    return validated
 
 
 def search_decision_makers(
@@ -101,9 +201,17 @@ def search_decision_makers(
                 found_people = parse_people_search_results(results.results, company)
 
                 if found_people:
-                    companies_with_results += 1
-                    decision_makers.extend(found_people)
-                    print(f'found {len(found_people)} people')
+                    # Validate with LLM before adding
+                    if LLM_VALIDATION_ENABLED and OPENROUTER_API_KEY:
+                        pre_count = len(found_people)
+                        found_people = validate_leads_with_llm(found_people, company)
+                        print(f'found {pre_count} → {len(found_people)} after LLM validation')
+                    else:
+                        print(f'found {len(found_people)} people')
+
+                    if found_people:
+                        companies_with_results += 1
+                        decision_makers.extend(found_people)
                 else:
                     print('no matches')
             else:
@@ -112,7 +220,7 @@ def search_decision_makers(
             sys.stdout.flush()
 
             # Rate limiting
-            time.sleep(API_DELAY_SECONDS)
+            time.sleep(EXA_API_DELAY)
 
         except Exception as e:
             print(f'ERROR: {e}')
