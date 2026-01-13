@@ -98,7 +98,7 @@ export default function EmailVerifierPage() {
 
       // Extract emails from CSV - try common column names
       const emailColumn = ["email", "emails", "e-mail", "address", "contact_email"]
-        .find(col => parsed.data[0]?.[col]);
+        .find(col => (parsed.data[0] as any)?.[col]);
 
       if (!emailColumn) {
         throw new Error(
@@ -107,7 +107,7 @@ export default function EmailVerifierPage() {
       }
 
       const emails = (parsed.data as any[])
-        .map(row => row[emailColumn])
+        .map(row => (row as any)[emailColumn])
         .filter(email => email && typeof email === "string" && email.trim());
 
       if (emails.length === 0) {

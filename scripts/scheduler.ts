@@ -16,7 +16,13 @@ import * as fs from "fs";
 
 // Use dynamic import for node-cron (ESM module)
 const startScheduler = async () => {
-  const cron = await import("node-cron");
+  let cron: any;
+  try {
+    cron = await import("node-cron");
+  } catch (e) {
+    console.error("node-cron not installed. Scheduler will not run.");
+    return;
+  }
 
   const PROJECT_ROOT = path.resolve(__dirname, "..");
   const PIPELINE_SCRIPT = path.join(

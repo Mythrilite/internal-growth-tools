@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
-import Database from "better-sqlite3";
 import path from "path";
+
+let Database: any;
+try {
+  Database = require("better-sqlite3");
+} catch {
+  Database = null;
+}
 
 // Database path
 const DB_PATH = path.join(process.cwd(), "data", "pipeline.db");
@@ -38,6 +44,9 @@ interface SummaryStats {
 
 function getDatabase() {
   try {
+    if (!Database) {
+      return null;
+    }
     // Don't use readonly: true on Windows as it can cause lock issues
     // Instead, open normally but don't write (just for reads)
     return new Database(DB_PATH);
