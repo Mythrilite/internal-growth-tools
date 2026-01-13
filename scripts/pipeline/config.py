@@ -37,7 +37,7 @@ LINKEDIN_JOB_URL = (
     'keywords=software%20engineer&'
     'origin=JOB_SEARCH_PAGE_KEYWORD_AUTOCOMPLETE&refresh=true'
 )
-DEFAULT_JOB_COUNT = 2000  # Reduced from 10000 for faster pipeline runs
+DEFAULT_JOB_COUNT = 5000  # Balanced for 3-hour GitHub Actions limit
 TEST_JOB_COUNT = 100
 
 # Pipeline Caps (prevent runaway execution time)

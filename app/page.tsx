@@ -78,6 +78,25 @@ export default function Home() {
             </Link>
           </CardContent>
         </Card>
+
+        <Card className="border-purple-200 bg-purple-50/50">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              Mythrilite Apollo
+              <span className="text-xs bg-purple-100 text-purple-800 px-2 py-0.5 rounded-full font-normal">
+                Icypeas
+              </span>
+            </CardTitle>
+            <CardDescription>
+              Search for leads using Icypeas People Search with free count preview
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Link href="/mythrilite-apollo">
+              <Button className="w-full" variant="default">Open Search</Button>
+            </Link>
+          </CardContent>
+        </Card>
       </div>
     </div>
   );
