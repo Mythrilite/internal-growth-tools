@@ -97,6 +97,25 @@ export default function Home() {
             </Link>
           </CardContent>
         </Card>
+
+        <Card className="border-blue-200 bg-blue-50/50">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              Email Verifier
+              <span className="text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full font-normal">
+                New
+              </span>
+            </CardTitle>
+            <CardDescription>
+              Verify email addresses: syntax, domain, MX records, disposable detection
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Link href="/email-verifier">
+              <Button className="w-full" variant="default">Open Tool</Button>
+            </Link>
+          </CardContent>
+        </Card>
       </div>
     </div>
   );

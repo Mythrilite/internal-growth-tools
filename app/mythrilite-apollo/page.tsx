@@ -441,18 +441,20 @@ export default function MythriliteApolloPage() {
   };
 
   const handleEnrich = async () => {
-    if (leads.length === 0) {
-      setError("No leads to enrich. Search for leads first.");
+    const filteredLeads = getFilteredLeads();
+    
+    if (filteredLeads.length === 0) {
+      setError("No leads match the current filters.");
       return;
     }
 
     // Filter leads that need enrichment (have company website and no email yet)
-    const leadsToEnrich = leads.filter(
+    const leadsToEnrich = filteredLeads.filter(
       (lead) => lead.lastCompanyWebsite && !lead.email
     );
 
     if (leadsToEnrich.length === 0) {
-      setError("All leads are already enriched or missing company website.");
+      setError("All filtered leads are already enriched or missing company website.");
       return;
     }
 
@@ -843,17 +845,22 @@ export default function MythriliteApolloPage() {
                   ) : (
                     <Search className="mr-2 h-4 w-4" />
                   )}
-                  {loading ? "Searching..." : enriching ? "Enriching Emails..." : "Search & Enrich Leads"}
+                  {loading ? "Searching..." : "Search Leads"}
                 </Button>
 
-                {leads.length > 0 && !enriching && (
+                {leads.length > 0 && (
                   <Button
                     onClick={handleEnrich}
-                    variant="outline"
-                    className="w-full text-xs"
+                    disabled={enriching || loading}
+                    className="w-full"
+                    variant={enriching ? "default" : "outline"}
                   >
-                    <Mail className="mr-2 h-3 w-3" />
-                    Re-enrich Emails
+                    {enriching ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <Mail className="mr-2 h-4 w-4" />
+                    )}
+                    {enriching ? "Enriching..." : `Enrich Filtered (${getFilteredLeads().length})`}
                   </Button>
                 )}
 
