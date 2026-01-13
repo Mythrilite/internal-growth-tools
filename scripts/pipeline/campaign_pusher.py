@@ -1,6 +1,11 @@
 """
 Campaign Pusher module.
 Adds validated leads to Instantly (email) and Prosp (LinkedIn) campaigns.
+
+Features:
+- Immediate status tracking: Each successful push updates DB immediately
+- Resume capability: Skips already-pushed leads on restart
+- Retry queue: Failed leads are retried at the end with longer delays
 """
 
 import time
@@ -21,7 +26,7 @@ from .config import (
     RETRY_BACKOFF_BASE,
     PROSP_WORKERS
 )
-from .db_logger import PipelineRun
+from .db_logger import PipelineRun, bulk_update_lead_status
 
 
 # Thread-safe counter for Prosp progress
@@ -125,6 +130,11 @@ def push_to_instantly(
     """
     Push leads to Instantly email campaign.
 
+    Features:
+    - Batch push (up to 1000 per request)
+    - Immediate status update after successful batch
+    - Resume capability: filters out already-pushed leads
+
     Args:
         leads: List of validated leads
         pipeline_run: PipelineRun instance for logging
@@ -132,20 +142,28 @@ def push_to_instantly(
     Returns:
         Push results summary
     """
-    stage_id = pipeline_run.start_stage('push_email', input_count=len(leads))
+    # Filter out leads already pushed to Instantly (for resume capability)
+    leads_to_push = [l for l in leads if l.get('status') != 'pushed_instantly']
+    skipped_already_pushed = len(leads) - len(leads_to_push)
 
-    if not leads:
+    if skipped_already_pushed > 0:
+        print(f'  Skipping {skipped_already_pushed} leads already pushed to Instantly')
+
+    stage_id = pipeline_run.start_stage('push_email', input_count=len(leads_to_push))
+
+    if not leads_to_push:
         pipeline_run.complete_stage(stage_id, output_count=0)
-        return {'uploaded': 0, 'failed': 0}
+        return {'uploaded': 0, 'failed': 0, 'skipped_already_pushed': skipped_already_pushed}
 
     headers = {
         'Authorization': f'Bearer {INSTANTLY_API_KEY}',
         'Content-Type': 'application/json'
     }
 
-    # Prepare lead data for Instantly
+    # Prepare lead data for Instantly, keeping track of db_ids for status updates
     instantly_leads = []
-    for lead in leads:
+    lead_db_ids = []  # Track db_ids in same order as instantly_leads
+    for lead in leads_to_push:
         instantly_lead = {
             'email': lead.get('email'),
             'first_name': lead.get('person_first_name') or lead.get('person_name', '').split()[0],
@@ -161,10 +179,13 @@ def push_to_instantly(
             }
         }
         instantly_leads.append(instantly_lead)
+        # Use 'id' for leads from DB, 'db_id' for leads from current run
+        lead_db_ids.append(lead.get('id') or lead.get('db_id'))
 
     # Instantly accepts up to 1000 leads per request
     batch_size = 1000
     batches = [instantly_leads[i:i + batch_size] for i in range(0, len(instantly_leads), batch_size)]
+    batch_db_ids = [lead_db_ids[i:i + batch_size] for i in range(0, len(lead_db_ids), batch_size)]
 
     total_uploaded = 0
     total_failed = 0
@@ -172,13 +193,14 @@ def push_to_instantly(
 
     print(f'Pushing {len(instantly_leads)} leads to Instantly in {len(batches)} batch(es)...')
 
-    for batch_num, batch in enumerate(batches, 1):
+    for batch_num, (batch, db_ids) in enumerate(zip(batches, batch_db_ids), 1):
         payload = {
             'leads': batch,
             'campaign_id': INSTANTLY_CAMPAIGN_ID,
             'skip_if_in_workspace': True,  # Don't add duplicates
         }
 
+        batch_success = False
         for attempt in range(MAX_RETRIES):
             try:
                 response = requests.post(
@@ -195,6 +217,7 @@ def push_to_instantly(
                     skipped = result.get('skipped_count', 0) + result.get('duplicated_leads', 0)
 
                     print(f'  Batch {batch_num}: {uploaded} uploaded, {skipped} skipped')
+                    batch_success = True
                     break
                 else:
                     error_msg = f'Instantly API error: {response.status_code} - {response.text}'
@@ -216,6 +239,12 @@ def push_to_instantly(
                     total_failed += len(batch)
                     pipeline_run.log_error('push_email', 'REQUEST_ERROR', str(e))
 
+        # IMMEDIATE STATUS UPDATE: Mark leads as pushed after successful batch
+        if batch_success:
+            valid_db_ids = [db_id for db_id in db_ids if db_id is not None]
+            if valid_db_ids:
+                bulk_update_lead_status(valid_db_ids, 'pushed_instantly')
+
     print(f'Instantly push complete: {total_uploaded} uploaded, {total_failed} failed')
 
     pipeline_run.complete_stage(
@@ -228,6 +257,7 @@ def push_to_instantly(
     return {
         'uploaded': total_uploaded,
         'failed': total_failed,
+        'skipped_already_pushed': skipped_already_pushed,
         'errors': errors
     }
 
@@ -239,6 +269,11 @@ def push_to_prosp(
     """
     Push leads to Prosp LinkedIn campaign using parallel processing.
 
+    Features:
+    - Immediate status update: Each successful push updates DB right away
+    - Resume capability: Skips leads already pushed (status='pushed_prosp')
+    - Retry queue: Failed leads are retried at the end with longer delays
+
     Args:
         leads: List of validated leads
         pipeline_run: PipelineRun instance for logging
@@ -246,20 +281,32 @@ def push_to_prosp(
     Returns:
         Push results summary
     """
-    stage_id = pipeline_run.start_stage('push_linkedin', input_count=len(leads))
+    # Filter out leads already pushed to Prosp (for resume capability)
+    leads_to_push = [l for l in leads if l.get('status') != 'pushed_prosp']
+    skipped_already_pushed = len(leads) - len(leads_to_push)
 
-    if not leads:
+    if skipped_already_pushed > 0:
+        print(f'  Skipping {skipped_already_pushed} leads already pushed to Prosp')
+
+    stage_id = pipeline_run.start_stage('push_linkedin', input_count=len(leads_to_push))
+
+    if not leads_to_push:
         pipeline_run.complete_stage(stage_id, output_count=0)
-        return {'uploaded': 0, 'failed': 0}
+        return {'uploaded': 0, 'failed': 0, 'skipped_already_pushed': skipped_already_pushed}
 
     progress = ProspProgressCounter()
     errors = []
     errors_lock = threading.Lock()
+    failed_leads = []  # Collect failed leads for retry
+    failed_leads_lock = threading.Lock()
 
-    print(f'Pushing {len(leads)} leads to Prosp using {PROSP_WORKERS} workers...')
+    print(f'Pushing {len(leads_to_push)} leads to Prosp using {PROSP_WORKERS} workers...')
 
-    def push_single_lead(lead: Dict[str, Any], index: int) -> bool:
+    def push_single_lead(lead: Dict[str, Any], index: int, is_retry: bool = False) -> bool:
         """Push a single lead to Prosp (runs in thread pool)."""
+        # Get db_id - could be 'id' (from DB) or 'db_id' (from current run)
+        db_id = lead.get('id') or lead.get('db_id')
+
         payload = {
             'api_key': PROSP_API_KEY,
             'linkedin_url': lead.get('linkedin_url'),
@@ -276,7 +323,11 @@ def push_to_prosp(
             ]
         }
 
-        for attempt in range(MAX_RETRIES):
+        # Use more retries for retry pass
+        max_attempts = MAX_RETRIES * 2 if is_retry else MAX_RETRIES
+        backoff_multiplier = 2 if is_retry else 1
+
+        for attempt in range(max_attempts):
             try:
                 response = requests.post(
                     f'{PROSP_API_URL}/leads',
@@ -286,35 +337,55 @@ def push_to_prosp(
                 )
 
                 if response.status_code in [200, 201]:
+                    # IMMEDIATE STATUS UPDATE: Mark as pushed right after success
+                    if db_id:
+                        try:
+                            pipeline_run.update_lead(db_id, {'status': 'pushed_prosp'})
+                        except Exception:
+                            pass  # Don't fail the push if DB update fails
+
                     count = progress.increment_success()
                     if count % 50 == 0:
-                        print(f'  Uploaded {count}/{len(leads)} leads to Prosp')
+                        print(f'  Uploaded {count}/{len(leads_to_push)} leads to Prosp')
                     return True
                 else:
-                    if attempt < MAX_RETRIES - 1:
-                        wait_time = RETRY_BACKOFF_BASE ** (attempt + 1)
+                    if attempt < max_attempts - 1:
+                        wait_time = (RETRY_BACKOFF_BASE ** (attempt + 1)) * backoff_multiplier
                         time.sleep(wait_time)
+                    else:
+                        # Final attempt failed
+                        if not is_retry:
+                            # Add to retry queue for later
+                            with failed_leads_lock:
+                                failed_leads.append(lead)
+                        else:
+                            # Already in retry pass, log error
+                            with errors_lock:
+                                errors.append({
+                                    'lead_index': index,
+                                    'linkedin_url': lead.get('linkedin_url'),
+                                    'db_id': db_id,
+                                    'error': f'Prosp API error: {response.status_code}'
+                                })
+                        progress.increment_failure()
+                        return False
+
+            except Exception as e:
+                if attempt < max_attempts - 1:
+                    wait_time = (RETRY_BACKOFF_BASE ** (attempt + 1)) * backoff_multiplier
+                    time.sleep(wait_time)
+                else:
+                    if not is_retry:
+                        with failed_leads_lock:
+                            failed_leads.append(lead)
                     else:
                         with errors_lock:
                             errors.append({
                                 'lead_index': index,
                                 'linkedin_url': lead.get('linkedin_url'),
-                                'error': f'Prosp API error: {response.status_code}'
+                                'db_id': db_id,
+                                'error': str(e)
                             })
-                        progress.increment_failure()
-                        return False
-
-            except Exception as e:
-                if attempt < MAX_RETRIES - 1:
-                    wait_time = RETRY_BACKOFF_BASE ** (attempt + 1)
-                    time.sleep(wait_time)
-                else:
-                    with errors_lock:
-                        errors.append({
-                            'lead_index': index,
-                            'linkedin_url': lead.get('linkedin_url'),
-                            'error': str(e)
-                        })
                     progress.increment_failure()
                     return False
 
@@ -322,13 +393,31 @@ def push_to_prosp(
 
     # Process leads in parallel
     with ThreadPoolExecutor(max_workers=PROSP_WORKERS) as executor:
-        futures = {executor.submit(push_single_lead, lead, i): lead for i, lead in enumerate(leads)}
+        futures = {executor.submit(push_single_lead, lead, i): lead for i, lead in enumerate(leads_to_push)}
 
         for future in as_completed(futures):
             try:
                 future.result()
             except Exception:
                 pass  # Errors already tracked in push_single_lead
+
+    # RETRY PASS: Try failed leads again with longer delays
+    if failed_leads:
+        print(f'\n  Retrying {len(failed_leads)} failed leads with longer delays...')
+        # Reset failure counter for retry pass
+        retry_progress = ProspProgressCounter()
+
+        # Process retries sequentially with longer delays to avoid rate limiting
+        for i, lead in enumerate(failed_leads):
+            time.sleep(1)  # 1 second delay between retries
+            success = push_single_lead(lead, i, is_retry=True)
+            if success:
+                retry_progress.increment_success()
+            else:
+                retry_progress.increment_failure()
+
+        retry_success, retry_failed = retry_progress.get_stats()
+        print(f'  Retry complete: {retry_success} recovered, {retry_failed} permanently failed')
 
     total_uploaded, total_failed = progress.get_stats()
     print(f'Prosp push complete: {total_uploaded} uploaded, {total_failed} failed')
@@ -343,6 +432,8 @@ def push_to_prosp(
     return {
         'uploaded': total_uploaded,
         'failed': total_failed,
+        'skipped_already_pushed': skipped_already_pushed,
+        'permanently_failed': len(errors),
         'error_count': len(errors)
     }
 

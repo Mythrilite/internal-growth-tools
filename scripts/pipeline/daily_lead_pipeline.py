@@ -25,7 +25,7 @@ from datetime import datetime
 sys.path.insert(0, str(__file__).replace('\\', '/').rsplit('/', 2)[0])
 
 from pipeline.config import validate_config, get_job_count
-from pipeline.db_logger import init_database, PipelineRun
+from pipeline.db_logger import init_database, PipelineRun, get_unpushed_leads
 from pipeline.linkedin_scraper import scrape_linkedin_jobs
 from pipeline.company_filter import filter_companies, filter_software_companies, prepare_for_search
 from pipeline.decision_maker_search import search_decision_makers
@@ -68,6 +68,7 @@ def run_pipeline(test_mode: bool = False) -> dict:
     pipeline_run = PipelineRun(config=config)
 
     stage_times = {}
+    unpushed_from_previous = []  # Initialize for summary
 
     try:
         # Stage 1: Scrape LinkedIn jobs
@@ -179,7 +180,21 @@ def run_pipeline(test_mode: bool = False) -> dict:
         print('=' * 40)
 
         stage_start = time.time()
-        push_results = push_to_campaigns(valid_leads, pipeline_run)
+
+        # RESUME CAPABILITY: Check for unpushed leads from previous runs
+        unpushed_from_previous = get_unpushed_leads('pushed_prosp')
+        if unpushed_from_previous:
+            print(f'\n📥 Found {len(unpushed_from_previous)} unpushed leads from previous runs')
+            # Convert DB format to lead format and merge with current run's leads
+            for lead in unpushed_from_previous:
+                lead['db_id'] = lead['id']  # Ensure db_id is set for status updates
+            # Combine: current run's validated leads + previous unpushed leads
+            all_leads_to_push = valid_leads + unpushed_from_previous
+            print(f'   Total leads to push: {len(all_leads_to_push)} ({len(valid_leads)} new + {len(unpushed_from_previous)} from previous)')
+        else:
+            all_leads_to_push = valid_leads
+
+        push_results = push_to_campaigns(all_leads_to_push, pipeline_run)
         stage_times['6_push'] = time.time() - stage_start
         print(f'⏱️  Stage 6 completed in {stage_times["6_push"]:.1f}s')
 
@@ -209,8 +224,12 @@ def run_pipeline(test_mode: bool = False) -> dict:
         print(f'Decision makers found: {len(decision_makers)}')
         print(f'Leads enriched: {len(enriched_leads)}')
         print(f'Leads validated: {len(valid_leads)}')
+        if unpushed_from_previous:
+            print(f'Leads recovered from previous runs: {len(unpushed_from_previous)}')
         print(f'Email campaign: {push_results["email"]["uploaded"]} uploaded')
         print(f'LinkedIn campaign: {push_results["linkedin"]["uploaded"]} uploaded')
+        if push_results["linkedin"].get("permanently_failed", 0) > 0:
+            print(f'LinkedIn permanently failed: {push_results["linkedin"]["permanently_failed"]} (will retry next run)')
         print(f'Completed at: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
         print('=' * 60)
 

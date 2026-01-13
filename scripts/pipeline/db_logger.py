@@ -376,3 +376,74 @@ def get_run_summary_stats() -> Dict:
             'leads_by_status': leads_by_status,
             'avg_leads_per_run': round(avg_leads_per_run, 1)
         }
+
+
+def get_unpushed_leads(target_status: str = 'pushed_prosp') -> List[Dict]:
+    """
+    Get all validated leads that haven't been pushed to the target status.
+    Used for resuming failed/interrupted pipeline runs.
+
+    Args:
+        target_status: The status to check against ('pushed_prosp' or 'pushed_instantly')
+
+    Returns:
+        List of lead dictionaries that need to be pushed
+    """
+    # Define status hierarchy - leads at these statuses haven't reached target yet
+    if target_status == 'pushed_prosp':
+        incomplete_statuses = ('validated', 'pushed_instantly')
+    else:
+        incomplete_statuses = ('validated',)
+
+    with get_connection() as conn:
+        placeholders = ','.join('?' * len(incomplete_statuses))
+        cursor = conn.execute(
+            f'''SELECT * FROM leads
+                WHERE status IN ({placeholders})
+                AND linkedin_url IS NOT NULL
+                AND linkedin_url != ''
+                ORDER BY created_at ASC''',
+            incomplete_statuses
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def get_unpushed_email_leads() -> List[Dict]:
+    """
+    Get all validated leads with emails that haven't been pushed to Instantly.
+
+    Returns:
+        List of lead dictionaries that need email push
+    """
+    with get_connection() as conn:
+        cursor = conn.execute(
+            '''SELECT * FROM leads
+                WHERE status = 'validated'
+                AND email IS NOT NULL
+                AND email != ''
+                ORDER BY created_at ASC'''
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def bulk_update_lead_status(lead_ids: List[int], status: str):
+    """
+    Update status for multiple leads in a single transaction.
+    More efficient than individual updates for batch operations.
+
+    Args:
+        lead_ids: List of lead database IDs
+        status: New status to set
+    """
+    if not lead_ids:
+        return
+
+    with get_connection() as conn:
+        placeholders = ','.join('?' * len(lead_ids))
+        conn.execute(
+            f'''UPDATE leads
+                SET status = ?, updated_at = ?
+                WHERE id IN ({placeholders})''',
+            [status, datetime.utcnow().isoformat()] + lead_ids
+        )
+        conn.commit()
