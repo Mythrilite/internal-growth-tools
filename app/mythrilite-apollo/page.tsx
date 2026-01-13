@@ -95,12 +95,70 @@ export default function MythriliteApolloPage() {
   const [languagesExclude, setLanguagesExclude] = useState("");
   const [schoolInclude, setSchoolInclude] = useState("");
   const [schoolExclude, setSchoolExclude] = useState("");
+  const [companySizeInclude, setCompanySizeInclude] = useState("");
+  const [companySizeExclude, setCompanySizeExclude] = useState("");
 
   const parseCommaSeparated = (value: string): string[] => {
     return value
       .split(",")
       .map((s) => s.trim())
       .filter((s) => s.length > 0);
+  };
+
+  const getFilteredLeads = (): Lead[] => {
+    if (leads.length === 0) return [];
+    
+    const includeList = parseCommaSeparated(companySizeInclude);
+    const excludeList = parseCommaSeparated(companySizeExclude);
+    
+    // If no size filters are set, return all leads
+    if (includeList.length === 0 && excludeList.length === 0) {
+      return leads;
+    }
+
+    return leads.filter((lead) => {
+      // Company size range mapping
+      const sizeRanges: { [key: string]: [number, number] } = {
+        '1-10': [1, 10],
+        '11-50': [11, 50],
+        '51-200': [51, 200],
+        '201-500': [201, 500],
+        '501-1000': [501, 1000],
+        '1001-5000': [1001, 5000],
+        '5001-10000': [5001, 10000],
+        '10000+': [10000, Infinity],
+      };
+
+      const companySize = lead.lastCompanySize;
+      if (companySize === undefined || companySize === null) {
+        return true; // Include leads with unknown size
+      }
+
+      // Check exclude list first
+      if (excludeList.length > 0) {
+        for (const sizeRange of excludeList) {
+          const [min, max] = sizeRanges[sizeRange] || [0, 0];
+          if (companySize >= min && companySize <= max) {
+            return false; // Exclude this lead
+          }
+        }
+      }
+
+      // Check include list
+      if (includeList.length > 0) {
+        let matches = false;
+        for (const sizeRange of includeList) {
+          const [min, max] = sizeRanges[sizeRange] || [0, 0];
+          if (companySize >= min && companySize <= max) {
+            matches = true;
+            break;
+          }
+        }
+        return matches;
+      }
+
+      return true;
+    });
   };
 
   const buildQuery = (): SearchQuery => {
@@ -193,6 +251,9 @@ export default function MythriliteApolloPage() {
       if (schoolExcArr.length > 0) query.school.exclude = schoolExcArr;
     }
 
+    // Note: Company size filtering is not supported by IcyPeas API
+    // It can be filtered from results client-side if needed
+
     return query;
   };
 
@@ -220,7 +281,14 @@ export default function MythriliteApolloPage() {
         throw new Error(data.error || "Failed to count leads");
       }
 
-      setCount(data.total);
+      // IcyPeas returns either 'total' or 'count' field
+      const total = data.total ?? data.count ?? data.total_count;
+      if (total === undefined || total === null) {
+        console.error("Unexpected API response structure:", data);
+        throw new Error(`Invalid response: expected total/count field. Got: ${JSON.stringify(data)}`);
+      }
+
+      setCount(total);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
@@ -458,6 +526,8 @@ export default function MythriliteApolloPage() {
     setLanguagesExclude("");
     setSchoolInclude("");
     setSchoolExclude("");
+    setCompanySizeInclude("");
+    setCompanySizeExclude("");
     setCount(null);
     setLeads([]);
     setError(null);
@@ -501,180 +571,220 @@ export default function MythriliteApolloPage() {
                 All fields support comma-separated values. Results are filtered to US location only.
               </CardDescription>
             </CardHeader>
-            <CardContent>
-              <Tabs defaultValue="job" className="w-full">
-                <TabsList className="grid w-full grid-cols-3 mb-4">
-                  <TabsTrigger value="job" className="text-xs">Job</TabsTrigger>
-                  <TabsTrigger value="company" className="text-xs">Company</TabsTrigger>
-                  <TabsTrigger value="other" className="text-xs">Other</TabsTrigger>
-                </TabsList>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label className="flex items-center gap-2">
+                  <Briefcase className="h-3 w-3" />
+                  Current Job Title
+                </Label>
+                <Input
+                  placeholder="Include: CTO, CEO, Founder"
+                  value={currentJobTitleInclude}
+                  onChange={(e) => setCurrentJobTitleInclude(e.target.value)}
+                />
+                <Input
+                  placeholder="Exclude: Intern, Junior"
+                  value={currentJobTitleExclude}
+                  onChange={(e) => setCurrentJobTitleExclude(e.target.value)}
+                  className="border-red-200 focus:border-red-400"
+                />
+              </div>
 
-                <TabsContent value="job" className="space-y-4">
-                  <div className="space-y-2">
-                    <Label className="flex items-center gap-2">
-                      <Briefcase className="h-3 w-3" />
-                      Current Job Title
-                    </Label>
-                    <Input
-                      placeholder="Include: CTO, CEO, Founder"
-                      value={currentJobTitleInclude}
-                      onChange={(e) => setCurrentJobTitleInclude(e.target.value)}
-                    />
-                    <Input
-                      placeholder="Exclude: Intern, Junior"
-                      value={currentJobTitleExclude}
-                      onChange={(e) => setCurrentJobTitleExclude(e.target.value)}
-                      className="border-red-200 focus:border-red-400"
-                    />
-                  </div>
+              <div className="space-y-2">
+                <Label>Past Job Title</Label>
+                <Input
+                  placeholder="Include: Engineer, Developer"
+                  value={pastJobTitleInclude}
+                  onChange={(e) => setPastJobTitleInclude(e.target.value)}
+                />
+                <Input
+                  placeholder="Exclude titles..."
+                  value={pastJobTitleExclude}
+                  onChange={(e) => setPastJobTitleExclude(e.target.value)}
+                  className="border-red-200 focus:border-red-400"
+                />
+              </div>
 
-                  <div className="space-y-2">
-                    <Label>Past Job Title</Label>
-                    <Input
-                      placeholder="Include: Engineer, Developer"
-                      value={pastJobTitleInclude}
-                      onChange={(e) => setPastJobTitleInclude(e.target.value)}
-                    />
-                    <Input
-                      placeholder="Exclude titles..."
-                      value={pastJobTitleExclude}
-                      onChange={(e) => setPastJobTitleExclude(e.target.value)}
-                      className="border-red-200 focus:border-red-400"
-                    />
-                  </div>
+              <div className="space-y-2">
+                <Label className="flex items-center gap-2">
+                  <Building2 className="h-3 w-3" />
+                  Current Company Name
+                </Label>
+                <Input
+                  placeholder="Include: Google, Microsoft"
+                  value={currentCompanyInclude}
+                  onChange={(e) => setCurrentCompanyInclude(e.target.value)}
+                />
+                <Input
+                  placeholder="Exclude companies..."
+                  value={currentCompanyExclude}
+                  onChange={(e) => setCurrentCompanyExclude(e.target.value)}
+                  className="border-red-200 focus:border-red-400"
+                />
+              </div>
 
-                  <div className="space-y-2">
-                    <Label className="flex items-center gap-2">
-                      <Search className="h-3 w-3" />
-                      Keyword (Full Profile Search)
-                    </Label>
-                    <Input
-                      placeholder="Include: SaaS, B2B, startup"
-                      value={keywordInclude}
-                      onChange={(e) => setKeywordInclude(e.target.value)}
-                    />
-                    <Input
-                      placeholder="Exclude keywords..."
-                      value={keywordExclude}
-                      onChange={(e) => setKeywordExclude(e.target.value)}
-                      className="border-red-200 focus:border-red-400"
-                    />
-                  </div>
-                </TabsContent>
+              <div className="space-y-2">
+                <Label>Past Company Name</Label>
+                <Input
+                  placeholder="Include: Amazon, IBM"
+                  value={pastCompanyInclude}
+                  onChange={(e) => setPastCompanyInclude(e.target.value)}
+                />
+                <Input
+                  placeholder="Exclude companies..."
+                  value={pastCompanyExclude}
+                  onChange={(e) => setPastCompanyExclude(e.target.value)}
+                  className="border-red-200 focus:border-red-400"
+                />
+              </div>
 
-                <TabsContent value="company" className="space-y-4">
-                  <div className="space-y-2">
-                    <Label className="flex items-center gap-2">
-                      <Building2 className="h-3 w-3" />
-                      Current Company Name
-                    </Label>
-                    <Input
-                      placeholder="Include: Google, Microsoft"
-                      value={currentCompanyInclude}
-                      onChange={(e) => setCurrentCompanyInclude(e.target.value)}
-                    />
-                    <Input
-                      placeholder="Exclude companies..."
-                      value={currentCompanyExclude}
-                      onChange={(e) => setCurrentCompanyExclude(e.target.value)}
-                      className="border-red-200 focus:border-red-400"
-                    />
-                  </div>
+              <div className="space-y-2">
+                <Label>Company ID / Domain / LinkedIn URL</Label>
+                <Input
+                  placeholder="icypeas.com, linkedin.com/company/..."
+                  value={currentCompanyIdInclude}
+                  onChange={(e) => setCurrentCompanyIdInclude(e.target.value)}
+                />
+              </div>
 
-                  <div className="space-y-2">
-                    <Label>Past Company Name</Label>
-                    <Input
-                      placeholder="Include: Amazon, IBM"
-                      value={pastCompanyInclude}
-                      onChange={(e) => setPastCompanyInclude(e.target.value)}
-                    />
-                    <Input
-                      placeholder="Exclude companies..."
-                      value={pastCompanyExclude}
-                      onChange={(e) => setPastCompanyExclude(e.target.value)}
-                      className="border-red-200 focus:border-red-400"
-                    />
-                  </div>
+              <div className="space-y-2">
+                <Label>Company Website</Label>
+                <Input
+                  placeholder="microsoft.com, apple.com"
+                  value={currentCompanyWebsiteInclude}
+                  onChange={(e) => setCurrentCompanyWebsiteInclude(e.target.value)}
+                />
+              </div>
 
-                  <div className="space-y-2">
-                    <Label>Company ID / Domain / LinkedIn URL</Label>
-                    <Input
-                      placeholder="icypeas.com, linkedin.com/company/..."
-                      value={currentCompanyIdInclude}
-                      onChange={(e) => setCurrentCompanyIdInclude(e.target.value)}
-                    />
+              <div className="space-y-3">
+                <Label className="text-xs">Company Size <span className="text-muted-foreground">(filters results after search)</span></Label>
+                
+                <div className="space-y-2">
+                  <p className="text-xs text-muted-foreground">Include:</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {['1-10', '11-50', '51-200', '201-500', '501-1000', '1001-5000', '5001-10000', '10000+'].map((size) => (
+                      <label key={size} className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={companySizeInclude.split(',').map(s => s.trim()).includes(size)}
+                          onChange={(e) => {
+                            const sizes = companySizeInclude.split(',').map(s => s.trim()).filter(s => s);
+                            if (e.target.checked) {
+                              if (!sizes.includes(size)) sizes.push(size);
+                            } else {
+                              sizes.splice(sizes.indexOf(size), 1);
+                            }
+                            setCompanySizeInclude(sizes.join(', '));
+                          }}
+                          className="rounded"
+                        />
+                        <span className="text-sm">{size}</span>
+                      </label>
+                    ))}
                   </div>
+                </div>
 
-                  <div className="space-y-2">
-                    <Label>Company Website</Label>
-                    <Input
-                      placeholder="microsoft.com, apple.com"
-                      value={currentCompanyWebsiteInclude}
-                      onChange={(e) => setCurrentCompanyWebsiteInclude(e.target.value)}
-                    />
+                <div className="space-y-2">
+                  <p className="text-xs text-muted-foreground">Exclude:</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {['1-10', '11-50', '51-200', '201-500', '501-1000', '1001-5000', '5001-10000', '10000+'].map((size) => (
+                      <label key={size} className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={companySizeExclude.split(',').map(s => s.trim()).includes(size)}
+                          onChange={(e) => {
+                            const sizes = companySizeExclude.split(',').map(s => s.trim()).filter(s => s);
+                            if (e.target.checked) {
+                              if (!sizes.includes(size)) sizes.push(size);
+                            } else {
+                              sizes.splice(sizes.indexOf(size), 1);
+                            }
+                            setCompanySizeExclude(sizes.join(', '));
+                          }}
+                          className="rounded"
+                        />
+                        <span className="text-sm">{size}</span>
+                      </label>
+                    ))}
                   </div>
-                </TabsContent>
+                </div>
+              </div>
 
-                <TabsContent value="other" className="space-y-4">
-                  <div className="space-y-2">
-                    <Label className="flex items-center gap-2">
-                      <MapPin className="h-3 w-3" />
-                      Location
-                    </Label>
-                    <Input
-                      value="US"
-                      disabled
-                      className="bg-muted"
-                    />
-                    <p className="text-xs text-muted-foreground">Location is locked to US only</p>
-                  </div>
+              <div className="space-y-2">
+                <Label className="flex items-center gap-2">
+                  <Search className="h-3 w-3" />
+                  Keyword (Full Profile Search)
+                </Label>
+                <Input
+                  placeholder="Include: SaaS, B2B, startup"
+                  value={keywordInclude}
+                  onChange={(e) => setKeywordInclude(e.target.value)}
+                />
+                <Input
+                  placeholder="Exclude keywords..."
+                  value={keywordExclude}
+                  onChange={(e) => setKeywordExclude(e.target.value)}
+                  className="border-red-200 focus:border-red-400"
+                />
+              </div>
 
-                  <div className="space-y-2">
-                    <Label>Skills</Label>
-                    <Input
-                      placeholder="Include: JavaScript, Python"
-                      value={skillsInclude}
-                      onChange={(e) => setSkillsInclude(e.target.value)}
-                    />
-                    <Input
-                      placeholder="Exclude skills..."
-                      value={skillsExclude}
-                      onChange={(e) => setSkillsExclude(e.target.value)}
-                      className="border-red-200 focus:border-red-400"
-                    />
-                  </div>
+              <div className="space-y-2">
+                <Label className="flex items-center gap-2">
+                  <MapPin className="h-3 w-3" />
+                  Location
+                </Label>
+                <Input
+                  value="US"
+                  disabled
+                  className="bg-muted"
+                />
+                <p className="text-xs text-muted-foreground">Location is locked to US only</p>
+              </div>
 
-                  <div className="space-y-2">
-                    <Label>Languages</Label>
-                    <Input
-                      placeholder="Include: EN, FR, Spanish"
-                      value={languagesInclude}
-                      onChange={(e) => setLanguagesInclude(e.target.value)}
-                    />
-                    <Input
-                      placeholder="Exclude languages..."
-                      value={languagesExclude}
-                      onChange={(e) => setLanguagesExclude(e.target.value)}
-                      className="border-red-200 focus:border-red-400"
-                    />
-                  </div>
+              <div className="space-y-2">
+                <Label>Skills</Label>
+                <Input
+                  placeholder="Include: JavaScript, Python"
+                  value={skillsInclude}
+                  onChange={(e) => setSkillsInclude(e.target.value)}
+                />
+                <Input
+                  placeholder="Exclude skills..."
+                  value={skillsExclude}
+                  onChange={(e) => setSkillsExclude(e.target.value)}
+                  className="border-red-200 focus:border-red-400"
+                />
+              </div>
 
-                  <div className="space-y-2">
-                    <Label>School</Label>
-                    <Input
-                      placeholder="Include: Stanford, Harvard"
-                      value={schoolInclude}
-                      onChange={(e) => setSchoolInclude(e.target.value)}
-                    />
-                    <Input
-                      placeholder="Exclude schools..."
-                      value={schoolExclude}
-                      onChange={(e) => setSchoolExclude(e.target.value)}
-                      className="border-red-200 focus:border-red-400"
-                    />
-                  </div>
-                </TabsContent>
-              </Tabs>
+              <div className="space-y-2">
+                <Label>Languages</Label>
+                <Input
+                  placeholder="Include: EN, FR, Spanish"
+                  value={languagesInclude}
+                  onChange={(e) => setLanguagesInclude(e.target.value)}
+                />
+                <Input
+                  placeholder="Exclude languages..."
+                  value={languagesExclude}
+                  onChange={(e) => setLanguagesExclude(e.target.value)}
+                  className="border-red-200 focus:border-red-400"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>School</Label>
+                <Input
+                  placeholder="Include: Stanford, Harvard"
+                  value={schoolInclude}
+                  onChange={(e) => setSchoolInclude(e.target.value)}
+                />
+                <Input
+                  placeholder="Exclude schools..."
+                  value={schoolExclude}
+                  onChange={(e) => setSchoolExclude(e.target.value)}
+                  className="border-red-200 focus:border-red-400"
+                />
+              </div>
 
               <div className="mt-6 space-y-3">
                 <div className="space-y-2">
@@ -716,7 +826,7 @@ export default function MythriliteApolloPage() {
                   Count Results (Free)
                 </Button>
 
-                {count !== null && (
+                {count !== null && count !== undefined && (
                   <div className="p-3 bg-blue-50 rounded-lg text-center">
                     <p className="text-sm text-muted-foreground">Matching leads:</p>
                     <p className="text-2xl font-bold text-blue-600">{count.toLocaleString()}</p>
@@ -785,7 +895,7 @@ export default function MythriliteApolloPage() {
                     Results
                     {leads.length > 0 && (
                       <Badge variant="secondary">
-                        {leads.length} of {totalLeads.toLocaleString()}
+                        {getFilteredLeads().length} of {leads.length} ({totalLeads.toLocaleString()} total)
                         {leads.length >= maxLeads && ` (max: ${maxLeads})`}
                       </Badge>
                     )}
@@ -830,7 +940,7 @@ export default function MythriliteApolloPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {leads.map((lead, index) => (
+                        {getFilteredLeads().map((lead, index) => (
                           <tr key={index} className="border-b hover:bg-muted/50">
                             <td className="py-2 px-2">
                               <div className="font-medium">
