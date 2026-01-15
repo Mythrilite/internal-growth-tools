@@ -55,6 +55,14 @@ def scrape_linkedin_jobs(
         if not runs_list or not runs_list.items:
             raise Exception('No runs found for LinkedIn scraper actor')
 
+        # Show all recent runs for transparency
+        print(f'\nRecent runs (showing last {len(runs_list.items)}):')
+        for i, run in enumerate(runs_list.items):
+            status = run.get('status')
+            run_id = run.get('id')
+            started = run.get('startedAt', 'N/A')
+            print(f'  {i+1}. [{status}] {run_id} - Started: {started}')
+
         # Find the most recent SUCCEEDED run
         latest_run = None
         for run in runs_list.items:
@@ -68,23 +76,39 @@ def scrape_linkedin_jobs(
         run_id = latest_run.get('id')
         started_at = latest_run.get('startedAt')
         finished_at = latest_run.get('finishedAt')
+        stats = latest_run.get('stats', {})
 
-        print(f'Found successful run: {run_id}')
+        print(f'\nUsing most recent successful run: {run_id}')
         print(f'  Started: {started_at}')
         print(f'  Finished: {finished_at}')
+        if stats:
+            print(f'  Run stats: {stats}')
 
         # Fetch results from the dataset
         dataset_id = latest_run.get('defaultDatasetId')
         if not dataset_id:
             raise Exception('No dataset ID in latest run')
 
-        print(f'Fetching results from dataset: {dataset_id}')
+        print(f'\nFetching results from dataset: {dataset_id}')
+
+        # Check dataset info first
+        dataset_info = client.dataset(dataset_id).get()
+        if dataset_info:
+            item_count = dataset_info.get('itemCount', 'unknown')
+            print(f'Dataset reports {item_count} total items')
 
         # Iterate through all items in the dataset
+        print('Fetching items...')
         for item in client.dataset(dataset_id).iterate_items():
             jobs.append(item)
+            if len(jobs) % 100 == 0:
+                print(f'  Fetched {len(jobs)} items so far...')
 
-        print(f'Successfully fetched {len(jobs)} job postings from latest run')
+        print(f'\n✅ Successfully fetched {len(jobs)} job postings from dataset')
+        if dataset_info and dataset_info.get('itemCount'):
+            expected = dataset_info.get('itemCount')
+            if len(jobs) != expected:
+                print(f'⚠️  WARNING: Expected {expected} items but got {len(jobs)}')
 
         pipeline_run.complete_stage(
             stage_id,
