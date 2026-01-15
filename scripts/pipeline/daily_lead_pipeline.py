@@ -2,9 +2,13 @@
 """
 Daily Lead Generation Pipeline
 
-Autonomous pipeline that runs daily at 7am ET to:
-1. Scrape LinkedIn job postings for SWE roles
-2. Filter to US software companies with 11-200 employees
+ARCHITECTURE:
+- Apify runs independently at 7:00am ET (configured in Apify scheduler)
+- This pipeline runs at 7:30am ET and fetches the latest Apify run results
+
+Pipeline stages:
+1. Fetch LinkedIn job postings from latest Apify run
+2. Filter to US software companies with 11-500 employees
 3. Find CTOs and engineering leaders at those companies
 4. Enrich with verified emails
 5. Push to Instantly (email) and Prosp (LinkedIn) campaigns
@@ -13,7 +17,7 @@ Usage:
     python daily_lead_pipeline.py [--test]
 
 Options:
-    --test    Run in test mode with 100 jobs instead of 10,000
+    --test    Run in test mode (fetches from latest Apify run regardless)
 """
 
 import sys

@@ -1,10 +1,10 @@
 name: Daily Lead Generation Pipeline
 
 on:
-  # Run at 7am ET (12:00 UTC in EST, 11:00 UTC in EDT)
-  # Using 12:00 UTC which is 7am EST / 8am EDT
+  # Run at 7:30am ET (12:30 UTC in EST, 11:30 UTC in EDT)
+  # Apify runs at 7am, this fetches results 30 minutes later
   schedule:
-    - cron: '0 12 * * *'
+    - cron: '30 12 * * *'
 
   # Allow manual trigger from GitHub UI
   workflow_dispatch:
@@ -17,17 +17,6 @@ on:
         options:
           - 'false'
           - 'true'
-      job_count:
-        description: 'Number of jobs to scrape (only used if not test mode)'
-        required: false
-        default: '10000'
-        type: choice
-        options:
-          - '100'
-          - '500'
-          - '1000'
-          - '5000'
-          - '10000'
 
 jobs:
   run-pipeline:
@@ -60,7 +49,6 @@ jobs:
           ICYPEAS_USER_ID: ${{ secrets.ICYPEAS_USER_ID }}
           INSTANTLY_API_KEY: ${{ secrets.INSTANTLY_API_KEY }}
           PROSP_API_KEY: ${{ secrets.PROSP_API_KEY }}
-          CUSTOM_JOB_COUNT: ${{ github.event.inputs.job_count }}
         run: |
           if [ "${{ github.event.inputs.test_mode }}" == "true" ]; then
             python scripts/pipeline/daily_lead_pipeline.py --test > pipeline_output.log 2>&1

@@ -23,12 +23,15 @@ def scrape_linkedin_jobs(
     custom_url: Optional[str] = None
 ) -> List[Dict[str, Any]]:
     """
-    Scrape LinkedIn job postings using Apify.
+    Fetch LinkedIn job postings from the most recent Apify run.
+
+    NOTE: This expects Apify to be running on its own schedule (e.g., 7am daily).
+    This function fetches the results from the most recent SUCCEEDED run.
 
     Args:
-        job_count: Number of jobs to scrape
+        job_count: Expected number of jobs (used for logging only)
         pipeline_run: PipelineRun instance for logging
-        custom_url: Optional custom LinkedIn jobs search URL
+        custom_url: Not used (kept for compatibility)
 
     Returns:
         List of job posting dictionaries
@@ -41,62 +44,39 @@ def scrape_linkedin_jobs(
         # Initialize Apify client
         client = ApifyClient(APIFY_API_KEY)
 
-        # Prepare the Actor input
-        run_input = {
-            'urls': [custom_url or LINKEDIN_JOB_URL],
-            'count': job_count,
-        }
+        print('Fetching most recent Apify run...')
 
-        print(f'Starting LinkedIn job scrape for {job_count} jobs...')
+        # Get recent runs for the LinkedIn scraper actor
+        actor_client = client.actor(LINKEDIN_SCRAPER_ACTOR)
+        runs_client = actor_client.runs()
 
-        # Start the Actor run (async)
-        run = None
-        for attempt in range(MAX_RETRIES):
-            try:
-                run = client.actor(LINKEDIN_SCRAPER_ACTOR).start(run_input=run_input)
+        runs_list = runs_client.list(limit=10)
+
+        if not runs_list or not runs_list.items:
+            raise Exception('No runs found for LinkedIn scraper actor')
+
+        # Find the most recent SUCCEEDED run
+        latest_run = None
+        for run in runs_list.items:
+            if run.get('status') == 'SUCCEEDED':
+                latest_run = run
                 break
-            except Exception as e:
-                if attempt < MAX_RETRIES - 1:
-                    wait_time = RETRY_BACKOFF_BASE ** (attempt + 1)
-                    print(f'Apify API error, retrying in {wait_time}s: {e}')
-                    time.sleep(wait_time)
-                else:
-                    raise
 
-        if not run:
-            raise Exception('Failed to start Apify actor after retries')
+        if not latest_run:
+            raise Exception('No successful runs found. Make sure Apify is scheduled to run before this pipeline.')
 
-        run_id = run.get('id')
-        print(f'Actor run started: {run_id}')
-        print(f'Waiting for run to complete (estimated ~7 minutes for {job_count} jobs)...')
+        run_id = latest_run.get('id')
+        started_at = latest_run.get('startedAt')
+        finished_at = latest_run.get('finishedAt')
 
-        # Poll until run completes (with 60-second wait intervals)
-        max_wait_time = 900  # 15 minutes max
-        elapsed = 0
-        poll_interval = 60  # Check every 60 seconds
-
-        while elapsed < max_wait_time:
-            run = client.run(run_id).get()
-            status = run.get('status')
-
-            if status == 'SUCCEEDED':
-                print(f'Run completed successfully in ~{elapsed}s')
-                break
-            elif status in ['FAILED', 'ABORTED', 'TIMED-OUT']:
-                raise Exception(f'Actor run {status}: {run.get("statusMessage", "Unknown error")}')
-
-            # Still running
-            time.sleep(poll_interval)
-            elapsed += poll_interval
-            print(f'  Still running... ({elapsed}s elapsed)')
-
-        if elapsed >= max_wait_time:
-            raise Exception(f'Actor run timed out after {max_wait_time}s')
+        print(f'Found successful run: {run_id}')
+        print(f'  Started: {started_at}')
+        print(f'  Finished: {finished_at}')
 
         # Fetch results from the dataset
-        dataset_id = run.get('defaultDatasetId')
+        dataset_id = latest_run.get('defaultDatasetId')
         if not dataset_id:
-            raise Exception('No dataset ID returned from Apify run')
+            raise Exception('No dataset ID in latest run')
 
         print(f'Fetching results from dataset: {dataset_id}')
 
@@ -104,7 +84,7 @@ def scrape_linkedin_jobs(
         for item in client.dataset(dataset_id).iterate_items():
             jobs.append(item)
 
-        print(f'Successfully scraped {len(jobs)} job postings')
+        print(f'Successfully fetched {len(jobs)} job postings from latest run')
 
         pipeline_run.complete_stage(
             stage_id,
