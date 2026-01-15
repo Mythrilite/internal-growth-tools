@@ -30,45 +30,26 @@ from .config import (
 from .db_logger import PipelineRun
 
 
-# Patterns to identify decision makers from search results (expanded for more coverage)
+# Patterns to identify C-level executives and founders only
 TITLE_PATTERNS = [
     # C-Level
+    r'\bCEO\b',
+    r'\bChief Executive Officer\b',
     r'\bCTO\b',
     r'\bChief Technology Officer\b',
     r'\bChief Technical Officer\b',
     r'\bCPO\b',
     r'\bChief Product Officer\b',
-    # VP Level
-    r'\bVP of Engineering\b',
-    r'\bVP Engineering\b',
-    r'\bVice President.*Engineering\b',
-    r'\bVP.*Technology\b',
-    r'\bVP of Product\b',
-    r'\bVP Product\b',
-    # Head/Director Level
-    r'\bHead of Engineering\b',
-    r'\bHead of Technology\b',
-    r'\bHead of Product\b',
-    r'\bDirector of Engineering\b',
-    r'\bEngineering Director\b',
-    r'\bDirector.*Engineering\b',
-    r'\bSr\.? Director.*Engineering\b',
-    r'\bSenior Director.*Engineering\b',
-    # Manager Level (decision makers at smaller companies)
-    r'\bEngineering Manager\b',
-    r'\bSr\.? Engineering Manager\b',
-    r'\bSenior Engineering Manager\b',
-    r'\bEngineering Lead\b',
-    r'\bLead Engineer\b',
-    r'\bPrincipal Engineer\b',
-    r'\bStaff Engineer\b',
-    r'\bDistinguished Engineer\b',
-    # Founders
+    r'\bCOO\b',
+    r'\bChief Operating Officer\b',
+    # Founders (with and without C-level titles)
+    r'\bCo-Founder.*CEO\b',
     r'\bCo-Founder.*CTO\b',
+    r'\bFounder.*CEO\b',
     r'\bFounder.*CTO\b',
     r'\bTechnical Co-Founder\b',
-    r'\bFounding Engineer\b',
     r'\bCo-Founder\b',
+    r'\bCofounder\b',
     r'\bFounder\b',
 ]
 
@@ -110,7 +91,7 @@ SEARCH RESULT:
 
 VALIDATION CRITERIA:
 1. Person MUST work at the target company (company name appears in their profile)
-2. Person MUST have a decision-maker title: CTO, VP of Engineering, Head of Engineering, Director of Engineering, Technical Co-Founder, Founding Engineer
+2. Person MUST have a C-level or founder title: CEO, CTO, CPO, COO, Cofounder, or Founder
 3. Person MUST have a valid LinkedIn profile URL
 
 Respond with JSON only:
@@ -232,8 +213,8 @@ def search_decision_makers(
             return
 
         try:
-            # Use people category search with expanded query for better coverage
-            query = f'(CTO OR "VP Engineering" OR "Head of Engineering" OR "Director of Engineering" OR "Engineering Manager" OR Founder) at {company_name}'
+            # Search for C-level executives and founders only
+            query = f'(CTO OR CEO OR Cofounder OR Founder) at {company_name}'
 
             # Search with retry logic
             results = None
