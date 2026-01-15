@@ -49,11 +49,11 @@ def scrape_linkedin_jobs(
 
         print(f'Starting LinkedIn job scrape for {job_count} jobs...')
 
-        # Run the Actor with retry logic
+        # Start the Actor run (async)
         run = None
         for attempt in range(MAX_RETRIES):
             try:
-                run = client.actor(LINKEDIN_SCRAPER_ACTOR).call(run_input=run_input)
+                run = client.actor(LINKEDIN_SCRAPER_ACTOR).start(run_input=run_input)
                 break
             except Exception as e:
                 if attempt < MAX_RETRIES - 1:
@@ -65,6 +65,33 @@ def scrape_linkedin_jobs(
 
         if not run:
             raise Exception('Failed to start Apify actor after retries')
+
+        run_id = run.get('id')
+        print(f'Actor run started: {run_id}')
+        print(f'Waiting for run to complete (estimated ~7 minutes for {job_count} jobs)...')
+
+        # Poll until run completes (with 60-second wait intervals)
+        max_wait_time = 900  # 15 minutes max
+        elapsed = 0
+        poll_interval = 60  # Check every 60 seconds
+
+        while elapsed < max_wait_time:
+            run = client.run(run_id).get()
+            status = run.get('status')
+
+            if status == 'SUCCEEDED':
+                print(f'Run completed successfully in ~{elapsed}s')
+                break
+            elif status in ['FAILED', 'ABORTED', 'TIMED-OUT']:
+                raise Exception(f'Actor run {status}: {run.get("statusMessage", "Unknown error")}')
+
+            # Still running
+            time.sleep(poll_interval)
+            elapsed += poll_interval
+            print(f'  Still running... ({elapsed}s elapsed)')
+
+        if elapsed >= max_wait_time:
+            raise Exception(f'Actor run timed out after {max_wait_time}s')
 
         # Fetch results from the dataset
         dataset_id = run.get('defaultDatasetId')

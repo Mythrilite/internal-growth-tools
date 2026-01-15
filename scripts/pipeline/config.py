@@ -35,9 +35,10 @@ LINKEDIN_JOB_URL = (
     'https://www.linkedin.com/jobs/search/?'
     'currentJobId=4330874439&geoId=103644278&'
     'keywords=software%20engineer&'
+    'f_C=B%2CC%2CD&'  # Company size: 11-50, 51-200, 201-500 employees
     'origin=JOB_SEARCH_PAGE_KEYWORD_AUTOCOMPLETE&refresh=true'
 )
-DEFAULT_JOB_COUNT = 5000  # Balanced for 3-hour GitHub Actions limit
+DEFAULT_JOB_COUNT = 1000  # Balanced for 3-hour GitHub Actions limit
 TEST_JOB_COUNT = 100
 
 # Pipeline Caps (prevent runaway execution time)
