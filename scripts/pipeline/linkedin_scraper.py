@@ -63,15 +63,14 @@ def scrape_linkedin_jobs(
             started = run.get('startedAt', 'N/A')
             print(f'  {i+1}. [{status}] {run_id} - Started: {started}')
 
-        # Find the most recent SUCCEEDED run
-        latest_run = None
-        for run in runs_list.items:
-            if run.get('status') == 'SUCCEEDED':
-                latest_run = run
-                break
+        # Find the most recent SUCCEEDED run (by startedAt timestamp)
+        succeeded_runs = [run for run in runs_list.items if run.get('status') == 'SUCCEEDED']
 
-        if not latest_run:
+        if not succeeded_runs:
             raise Exception('No successful runs found. Make sure Apify is scheduled to run before this pipeline.')
+
+        # Sort by startedAt to get the newest (timestamps are ISO format, sortable as strings)
+        latest_run = max(succeeded_runs, key=lambda r: r.get('startedAt', ''))
 
         run_id = latest_run.get('id')
         started_at = latest_run.get('startedAt')
