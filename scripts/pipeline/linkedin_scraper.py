@@ -50,7 +50,7 @@ def scrape_linkedin_jobs(
         actor_client = client.actor(LINKEDIN_SCRAPER_ACTOR)
         runs_client = actor_client.runs()
 
-        runs_list = runs_client.list(limit=10)
+        runs_list = runs_client.list(limit=50)
 
         if not runs_list or not runs_list.items:
             raise Exception('No runs found for LinkedIn scraper actor')
@@ -61,7 +61,20 @@ def scrape_linkedin_jobs(
             status = run.get('status')
             run_id = run.get('id')
             started = run.get('startedAt', 'N/A')
-            print(f'  {i+1}. [{status}] {run_id} - Started: {started}')
+            dataset_id = run.get('defaultDatasetId')
+
+            # Get item count for successful runs
+            item_count_str = ''
+            if status == 'SUCCEEDED' and dataset_id:
+                try:
+                    dataset_info = client.dataset(dataset_id).get()
+                    if dataset_info:
+                        item_count = dataset_info.get('itemCount', 'unknown')
+                        item_count_str = f' (Items: {item_count})'
+                except:
+                    pass
+
+            print(f'  {i+1}. [{status}] {run_id} - Started: {started}{item_count_str}')
 
         # Find the most recent SUCCEEDED run (by startedAt timestamp)
         succeeded_runs = [run for run in runs_list.items if run.get('status') == 'SUCCEEDED']
