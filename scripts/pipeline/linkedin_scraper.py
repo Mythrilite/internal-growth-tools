@@ -50,7 +50,7 @@ def scrape_linkedin_jobs(
         actor_client = client.actor(LINKEDIN_SCRAPER_ACTOR)
         runs_client = actor_client.runs()
 
-        runs_list = runs_client.list(limit=50)
+        runs_list = runs_client.list(limit=50, desc=True)
 
         if not runs_list or not runs_list.items:
             raise Exception('No runs found for LinkedIn scraper actor')
