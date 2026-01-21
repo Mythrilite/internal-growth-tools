@@ -48,7 +48,10 @@ jobs:
           ICYPEAS_API_KEY: ${{ secrets.ICYPEAS_API_KEY }}
           ICYPEAS_USER_ID: ${{ secrets.ICYPEAS_USER_ID }}
           INSTANTLY_API_KEY: ${{ secrets.INSTANTLY_API_KEY }}
+          INSTANTLY_CAMPAIGN_ID: ${{ secrets.INSTANTLY_CAMPAIGN_ID }}
           PROSP_API_KEY: ${{ secrets.PROSP_API_KEY }}
+          PROSP_LIST_ID: ${{ secrets.PROSP_LIST_ID }}
+          PROSP_CAMPAIGN_ID: ${{ secrets.PROSP_CAMPAIGN_ID }}
         run: |
           if [ "${{ github.event.inputs.test_mode }}" == "true" ]; then
             python scripts/pipeline/daily_lead_pipeline.py --test > pipeline_output.log 2>&1
