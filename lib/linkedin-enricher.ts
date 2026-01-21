@@ -200,6 +200,34 @@ function isLikelyLocation(text: string): boolean {
   return locationKeywords.some((pattern) => pattern.test(text));
 }
 
+/**
+ * Generates a likely domain name from a company name.
+ * This is a best-effort guess and may not always be accurate.
+ *
+ * @param companyName The company name
+ * @returns A likely domain (e.g., "Acme Corp" -> "acmecorp.com")
+ */
+export function generateDomainFromCompany(companyName: string): string | undefined {
+  if (!companyName || companyName.trim() === "") {
+    return undefined;
+  }
+
+  // Normalize: lowercase, remove special chars, keep only alphanumeric
+  const normalized = companyName
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, "") // Remove special characters
+    .replace(/\s+/g, "") // Remove spaces
+    .trim();
+
+  if (normalized.length === 0) {
+    return undefined;
+  }
+
+  // Common tech company domain patterns
+  // Most companies use .com, but some use .io, .ai, etc.
+  return `${normalized}.com`;
+}
+
 export function validateLinkedInPostUrl(url: string): boolean {
   // LinkedIn post URLs follow patterns like:
   // https://www.linkedin.com/posts/username_activity-1234567890
@@ -249,13 +277,17 @@ export async function fetchPostReactions(
     if (items.length > 0) {
       const mappedReactions = items.map((item: any) => {
         const headline = item.headline || "";
+        const company = extractCompanyFromHeadline(headline);
+        const companyDomain = company ? generateDomainFromCompany(company) : undefined;
+
         return {
           name: item.fullName || "",
           headline,
           linkedin_url: item.profileUrl || "",
           reaction_type: item.reactionType || "",
           timestamp: item.timestamp || "",
-          company: extractCompanyFromHeadline(headline),
+          company,
+          company_domain: companyDomain,
         };
       });
 

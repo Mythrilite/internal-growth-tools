@@ -11,6 +11,9 @@ import {
   type ContactData,
 } from "@/lib/linkedin-enricher";
 
+// Configure route timeout (requires Vercel Pro for >60s)
+export const maxDuration = 300; // 5 minutes
+
 export async function POST(request: NextRequest) {
   try {
     const cladoApiKey = process.env.CLADO_API_KEY;
