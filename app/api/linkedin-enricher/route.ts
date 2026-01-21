@@ -11,8 +11,8 @@ import {
   type ContactData,
 } from "@/lib/linkedin-enricher";
 
-// Configure route timeout (requires Vercel Pro for >60s)
-export const maxDuration = 300; // 5 minutes
+// Note: This endpoint does both fetch AND filter, which can timeout on Vercel Hobby plan
+// Recommend using separate /fetch and /filter endpoints instead for better control
 
 export async function POST(request: NextRequest) {
   try {

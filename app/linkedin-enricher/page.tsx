@@ -143,8 +143,8 @@ export default function LinkedInEnricherPage() {
 
   // Resume filtering from saved state
   const resumeFiltering = async (saved: SavedState) => {
-    const BATCH_SIZE = 20;
-    const PARALLEL_BATCHES = 5;
+    const BATCH_SIZE = 10; // Reduced from 20 to work with Vercel Hobby plan timeout
+    const PARALLEL_BATCHES = 2; // Reduced from 5 to avoid overwhelming Vercel
     const allProfiles = saved.allProfiles;
     const allFilteredResults = [...saved.filteredResults];
     const startIndex = saved.filterIndex;
@@ -443,8 +443,8 @@ export default function LinkedInEnricherPage() {
       setStage("filtering");
       setProgress({ stage: "Filtering by ICP", current: 0, total: allProfiles.length });
 
-      const BATCH_SIZE = 20;
-      const PARALLEL_BATCHES = 5; // Run 5 batches in parallel = 100 profiles at once
+      const BATCH_SIZE = 10; // Reduced from 20 to work with Vercel Hobby plan timeout
+      const PARALLEL_BATCHES = 2; // Reduced from 5 to avoid overwhelming Vercel (was 100 profiles at once)
       const allFilteredResults: Array<{ profile: LinkedInProfile; icp_result: ICPFilterResult }> = [];
 
       // Initialize stats for saving progress

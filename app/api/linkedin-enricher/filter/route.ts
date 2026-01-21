@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { filterByICP, type LinkedInProfile, type ICPFilterResult } from "@/lib/linkedin-enricher";
 
 // Process profiles in batches to avoid timeout
-const BATCH_SIZE = 5; // Process 5 profiles concurrently
+const BATCH_SIZE = 3; // Process 3 profiles concurrently (reduced for Hobby plan)
+const MAX_PROFILES_PER_REQUEST = 10; // Limit per API call to stay under 10s timeout
 
 async function processBatch(
   profiles: LinkedInProfile[],
@@ -22,7 +23,7 @@ async function processBatch(
     .map(r => r.value);
 }
 
-export const maxDuration = 60; // Set max duration to 60 seconds (requires Vercel Pro)
+// No maxDuration set - works on Vercel Hobby plan (10s limit)
 
 export async function POST(request: NextRequest) {
   try {
@@ -53,6 +54,19 @@ export async function POST(request: NextRequest) {
       console.log("[Filter] Empty profiles array received");
       return NextResponse.json(
         { error: "No profiles provided for filtering" },
+        { status: 400 }
+      );
+    }
+
+    // Limit profiles per request to avoid timeout on Vercel Hobby plan
+    if (profiles.length > MAX_PROFILES_PER_REQUEST) {
+      console.log(`[Filter] Too many profiles (${profiles.length}), limiting to ${MAX_PROFILES_PER_REQUEST}`);
+      return NextResponse.json(
+        {
+          error: `Too many profiles. Please send max ${MAX_PROFILES_PER_REQUEST} profiles per request. Call this endpoint multiple times for larger batches.`,
+          max_profiles: MAX_PROFILES_PER_REQUEST,
+          received: profiles.length
+        },
         { status: 400 }
       );
     }
