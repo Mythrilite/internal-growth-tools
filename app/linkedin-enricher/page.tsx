@@ -747,10 +747,12 @@ export default function LinkedInEnricherPage() {
       "linkedin_url",
       "reaction_type",
       "company",
+      "company_domain",
       "icp_decision",
       "icp_reasoning",
       "icp_confidence",
       "extracted_company",
+      "extracted_company_domain",
       "extracted_role",
       "extracted_seniority",
       "estimated_company_size",
@@ -763,10 +765,12 @@ export default function LinkedInEnricherPage() {
         lead.profile.linkedin_url,
         lead.profile.reaction_type || "",
         lead.profile.company || "",
+        lead.profile.company_domain || "",
         lead.icp_result.decision,
         `"${lead.icp_result.reasoning.replace(/"/g, '""')}"`,
         lead.icp_result.confidence,
         lead.icp_result.extracted_info?.company || "",
+        lead.icp_result.extracted_info?.company_domain || "",
         lead.icp_result.extracted_info?.role || "",
         lead.icp_result.extracted_info?.seniority_level || "",
         lead.icp_result.extracted_info?.estimated_company_size || "",
@@ -1168,6 +1172,13 @@ https://www.linkedin.com/posts/username3_activity-555555555"
                       <div>
                         <span className="font-medium">Company:</span>{" "}
                         {lead.icp_result.extracted_info.company}
+                      </div>
+                    )}
+
+                    {lead.icp_result.extracted_info?.company_domain && (
+                      <div>
+                        <span className="font-medium">Domain:</span>{" "}
+                        {lead.icp_result.extracted_info.company_domain}
                       </div>
                     )}
 

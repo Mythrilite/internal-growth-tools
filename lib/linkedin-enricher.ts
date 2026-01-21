@@ -14,6 +14,7 @@ export interface ICPFilterResult {
   confidence: "HIGH" | "MEDIUM" | "LOW";
   extracted_info?: {
     company?: string;
+    company_domain?: string; // NEW: LLM-extracted domain
     role?: string;
     seniority_level?: string;
     estimated_company_size?: string;
@@ -69,6 +70,7 @@ RESPONSE FORMAT (JSON):
   "confidence": "HIGH", "MEDIUM", or "LOW",
   "extracted_info": {
     "company": "Company name if mentioned",
+    "company_domain": "Most likely company domain (e.g. stripe.com, openai.com). Consider common patterns (.com, .io, .ai)",
     "role": "Their role title",
     "seniority_level": "Junior/Mid/Senior/Leadership",
     "estimated_company_size": "Your estimate"
@@ -226,6 +228,80 @@ export function generateDomainFromCompany(companyName: string): string | undefin
   // Common tech company domain patterns
   // Most companies use .com, but some use .io, .ai, etc.
   return `${normalized}.com`;
+}
+
+/**
+ * Uses Grok LLM to intelligently extract the company domain from company name and headline.
+ * Falls back to simple generation if LLM fails.
+ *
+ * @param companyName The company name extracted from headline
+ * @param headline The full LinkedIn headline for context
+ * @param openRouterKey OpenRouter API key
+ * @returns The likely company domain
+ */
+export async function extractDomainWithLLM(
+  companyName: string,
+  headline: string,
+  openRouterKey: string
+): Promise<string | undefined> {
+  if (!companyName || !openRouterKey) {
+    return generateDomainFromCompany(companyName);
+  }
+
+  try {
+    const prompt = `Given the company name "${companyName}" from the LinkedIn headline: "${headline}"
+
+What is the most likely company website domain? Consider:
+- Common domain patterns (.com, .io, .ai, .co, etc.)
+- Company name variations (with/without spaces, abbreviations)
+- Industry-specific patterns (tech companies often use .io or .ai)
+
+Respond with ONLY the domain (e.g., "stripe.com", "openai.com", "vercel.app"). No explanation, just the domain.`;
+
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL
+      || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null)
+      || "https://myth-internal-growth-tools.vercel.app";
+
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${openRouterKey}`,
+        "HTTP-Referer": appUrl,
+        "X-Title": "Mythrilite - LinkedIn Enricher",
+      },
+      body: JSON.stringify({
+        model: "x-ai/grok-4.1-fast",
+        messages: [
+          {
+            role: "user",
+            content: prompt,
+          },
+        ],
+        temperature: 0,
+        max_tokens: 50,
+      }),
+    });
+
+    if (!response.ok) {
+      console.warn(`[extractDomainWithLLM] API error ${response.status}, falling back to simple method`);
+      return generateDomainFromCompany(companyName);
+    }
+
+    const data = await response.json();
+    const domain = data.choices?.[0]?.message?.content?.trim().toLowerCase();
+
+    // Validate domain format (basic check)
+    if (domain && /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(domain)) {
+      return domain;
+    }
+
+    // Fallback if response doesn't look like a domain
+    return generateDomainFromCompany(companyName);
+  } catch (error) {
+    console.warn("[extractDomainWithLLM] Error:", error);
+    return generateDomainFromCompany(companyName);
+  }
 }
 
 export function validateLinkedInPostUrl(url: string): boolean {
