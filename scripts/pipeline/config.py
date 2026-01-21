@@ -25,9 +25,15 @@ DATABASE_PATH = DATA_DIR / 'pipeline.db'
 APIFY_API_KEY = os.getenv('APIFY_API_KEY', '')
 EXA_API_KEY = os.getenv('EXA_API_KEY', '')
 ICYPEAS_API_KEY = os.getenv('ICYPEAS_API_KEY', '')
+ICYPEAS_USER_ID = os.getenv('ICYPEAS_USER_ID', '')
 INSTANTLY_API_KEY = os.getenv('INSTANTLY_API_KEY', '')
 PROSP_API_KEY = os.getenv('PROSP_API_KEY', '')
 OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY', '')
+
+# Campaign IDs
+INSTANTLY_CAMPAIGN_ID = os.getenv('INSTANTLY_CAMPAIGN_ID', '')
+PROSP_LIST_ID = os.getenv('PROSP_LIST_ID', '')
+PROSP_CAMPAIGN_ID = os.getenv('PROSP_CAMPAIGN_ID', '')
 
 # LinkedIn Job Scraper Configuration
 LINKEDIN_SCRAPER_ACTOR = 'curious_coder/linkedin-jobs-scraper'
@@ -62,17 +68,12 @@ LLM_VALIDATION_ENABLED = False  # Disabled by default - adds significant overhea
 
 # Icypeas Configuration
 ICYPEAS_BASE_URL = 'https://app.icypeas.com/api'
-ICYPEAS_USER_ID = os.getenv('ICYPEAS_USER_ID', '')  # User ID for bulk search API
 ICYPEAS_BATCH_SIZE = 5000  # Max items per bulk request
 ICYPEAS_POLL_INTERVAL = 5  # Seconds between status checks
 ICYPEAS_POLL_TIMEOUT = 1800  # Max seconds to wait for results (30 minutes for bulk searches with many items)
 
-# Campaign Configuration
-INSTANTLY_CAMPAIGN_ID = '13c27967-c1d6-4a3a-9262-9bddb81745bc'
+# Campaign API URLs
 INSTANTLY_API_URL = 'https://api.instantly.ai/api/v2'
-
-PROSP_LIST_ID = 'a2d17428-17d4-45e4-b33c-e7edec21fd58'
-PROSP_CAMPAIGN_ID = '1c7017ab-2e26-4f2e-b89d-8f0d6fc428d5'
 PROSP_API_URL = 'https://prosp.ai/api/v1'
 
 # Rate Limiting
@@ -89,7 +90,7 @@ RETRY_BACKOFF_BASE = 2  # Exponential backoff base (seconds)
 
 
 def validate_config():
-    """Validate that all required API keys are set."""
+    """Validate that all required API keys and configuration are set."""
     missing = []
 
     if not APIFY_API_KEY:
@@ -98,13 +99,21 @@ def validate_config():
         missing.append('EXA_API_KEY')
     if not ICYPEAS_API_KEY:
         missing.append('ICYPEAS_API_KEY')
+    if not ICYPEAS_USER_ID:
+        missing.append('ICYPEAS_USER_ID')
     if not INSTANTLY_API_KEY:
         missing.append('INSTANTLY_API_KEY')
+    if not INSTANTLY_CAMPAIGN_ID:
+        missing.append('INSTANTLY_CAMPAIGN_ID')
     if not PROSP_API_KEY:
         missing.append('PROSP_API_KEY')
+    if not PROSP_LIST_ID:
+        missing.append('PROSP_LIST_ID')
+    if not PROSP_CAMPAIGN_ID:
+        missing.append('PROSP_CAMPAIGN_ID')
 
     if missing:
-        raise ValueError(f"Missing required API keys: {', '.join(missing)}")
+        raise ValueError(f"Missing required configuration: {', '.join(missing)}")
 
     return True
 
