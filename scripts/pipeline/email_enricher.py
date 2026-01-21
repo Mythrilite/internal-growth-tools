@@ -356,8 +356,9 @@ def fetch_bulk_results(
     has_more = True
     sort_value = None
     page = 0
+    MAX_PAGES = 100  # Safety limit: 100 pages * 100 items = 10,000 max results
 
-    while has_more:
+    while has_more and page < MAX_PAGES:
         try:
             payload = {
                 'mode': 'bulk',
@@ -445,6 +446,9 @@ def fetch_bulk_results(
             import traceback
             traceback.print_exc()
             has_more = False
+
+    if page >= MAX_PAGES:
+        print(f'      WARNING: Hit maximum page limit ({MAX_PAGES} pages). Fetched {len(results)} results.')
 
     return results
 
