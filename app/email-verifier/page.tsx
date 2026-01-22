@@ -40,6 +40,12 @@ interface VerificationStats {
   errors: number;
 }
 
+interface VerificationProgress {
+  current: number;
+  total: number;
+  message: string;
+}
+
 export default function EmailVerifierPage() {
   const [tab, setTab] = useState<Tab>("single");
   const [singleEmail, setSingleEmail] = useState("");
@@ -48,6 +54,7 @@ export default function EmailVerifierPage() {
   const [results, setResults] = useState<EmailValidation[]>([]);
   const [stats, setStats] = useState<VerificationStats | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [progress, setProgress] = useState<VerificationProgress | null>(null);
 
   // Single email verification
   const verifySingleEmail = async (e: React.FormEvent) => {
@@ -87,6 +94,8 @@ export default function EmailVerifierPage() {
     setLoading(true);
     setError(null);
     setResults([]);
+    setProgress(null);
+    setStats(null);
 
     try {
       const csvContent = await csvFile.text();
@@ -114,39 +123,76 @@ export default function EmailVerifierPage() {
         throw new Error("No valid emails found in CSV");
       }
 
-      if (emails.length > 100) {
-        throw new Error("Maximum 100 emails per batch");
+      console.log(`Processing ${emails.length} emails in batches of 50...`);
+
+      // Process in batches of 50 to avoid timeout
+      const BATCH_SIZE = 50;
+      const allResults: EmailValidation[] = [];
+      const batches: string[][] = [];
+
+      for (let i = 0; i < emails.length; i += BATCH_SIZE) {
+        batches.push(emails.slice(i, i + BATCH_SIZE));
       }
 
-      // Verify emails
-      const response = await fetch("/api/email-verifier", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ emails }),
+      setProgress({
+        current: 0,
+        total: emails.length,
+        message: `Processing batch 1/${batches.length}...`
       });
 
-      if (!response.ok) {
+      // Process batches sequentially to avoid overwhelming the API
+      for (let i = 0; i < batches.length; i++) {
+        const batch = batches[i];
+        const batchNum = i + 1;
+
+        setProgress({
+          current: i * BATCH_SIZE,
+          total: emails.length,
+          message: `Processing batch ${batchNum}/${batches.length} (${batch.length} emails)...`
+        });
+
+        const response = await fetch("/api/email-verifier", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ emails: batch }),
+        });
+
+        if (!response.ok) {
+          const data = await response.json();
+          throw new Error(data.error || `Failed to verify batch ${batchNum}`);
+        }
+
         const data = await response.json();
-        throw new Error(data.error || "Failed to verify emails");
+        allResults.push(...data.results);
+
+        // Small delay between batches to avoid rate limiting
+        if (i < batches.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
       }
 
-      const data = await response.json();
-      setResults(data.results);
+      setProgress({
+        current: emails.length,
+        total: emails.length,
+        message: "Verification complete!"
+      });
+
+      setResults(allResults);
 
       // Calculate stats
       const calculatedStats: VerificationStats = {
-        total: data.results.length,
-        valid: data.results.filter((r: EmailValidation) => r.status === "VALID").length,
-        disposable: data.results.filter((r: EmailValidation) => r.is_disposable).length,
-        invalid: data.results.filter((r: EmailValidation) => !r.syntax_valid).length,
-        role_based: data.results.filter((r: EmailValidation) => r.is_role_based).length,
-        errors: data.errors?.length || 0,
+        total: allResults.length,
+        valid: allResults.filter((r: EmailValidation) => r.status === "VALID").length,
+        disposable: allResults.filter((r: EmailValidation) => r.is_disposable).length,
+        invalid: allResults.filter((r: EmailValidation) => !r.syntax_valid).length,
+        role_based: allResults.filter((r: EmailValidation) => r.is_role_based).length,
+        errors: 0,
       };
       setStats(calculatedStats);
 
       // Auto-download
-      if (data.results.length > 0) {
-        downloadResults(data.results, `email_verification_${new Date().toISOString().split('T')[0]}.csv`);
+      if (allResults.length > 0) {
+        downloadResults(allResults, `email_verification_${new Date().toISOString().split('T')[0]}.csv`);
       }
 
       setCsvFile(null);
@@ -154,6 +200,7 @@ export default function EmailVerifierPage() {
       setError(err instanceof Error ? err.message : "Failed to verify emails");
     } finally {
       setLoading(false);
+      setProgress(null);
     }
   };
 
@@ -288,7 +335,7 @@ export default function EmailVerifierPage() {
                 {loading ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Verifying...
+                    {progress ? `${progress.current}/${progress.total}` : "Verifying..."}
                   </>
                 ) : (
                   <>
@@ -298,6 +345,24 @@ export default function EmailVerifierPage() {
                 )}
               </Button>
             </div>
+
+            {/* Progress Indicator */}
+            {progress && loading && (
+              <div className="mt-4 p-4 bg-muted rounded-lg">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-medium">{progress.message}</span>
+                  <span className="text-sm text-muted-foreground">
+                    {progress.current} / {progress.total} emails
+                  </span>
+                </div>
+                <div className="w-full bg-background rounded-full h-2">
+                  <div
+                    className="bg-primary h-2 rounded-full transition-all duration-300"
+                    style={{ width: `${(progress.current / progress.total) * 100}%` }}
+                  />
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

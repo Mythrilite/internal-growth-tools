@@ -31,9 +31,15 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      if (validEmails.length > 100) {
+      // Limit per API call to avoid timeouts (Vercel Hobby = 10s)
+      // Frontend should batch large CSVs client-side
+      if (validEmails.length > 50) {
         return NextResponse.json(
-          { error: "Maximum 100 emails per request" },
+          {
+            error: "Maximum 50 emails per API request. For larger batches, send multiple requests.",
+            max_per_request: 50,
+            received: validEmails.length
+          },
           { status: 400 }
         );
       }
