@@ -173,6 +173,86 @@ export function convertToCSV(validations: EmailValidation[]): string {
 }
 
 /**
+ * Convert validation results to CSV format, preserving original CSV columns
+ * Merges original data with verification results
+ */
+export function convertToCSVWithOriginalData(
+  validations: EmailValidation[],
+  originalData: any[],
+  emailColumn: string
+): string {
+  if (originalData.length === 0) {
+    return convertToCSV(validations);
+  }
+
+  // Get all column names from the original data (first row)
+  const originalColumns = Object.keys(originalData[0] || {});
+
+  // Define verification columns (exclude email since it's already in original)
+  const verificationColumns = [
+    "verification_status",
+    "syntax_valid",
+    "domain_exists",
+    "has_mx",
+    "is_disposable",
+    "is_role_based",
+    "alias_of",
+    "verification_error",
+  ];
+
+  // Create headers: all original columns + verification columns
+  const headers = [...originalColumns, ...verificationColumns];
+
+  // Create a map of email -> verification result for fast lookup
+  const verificationMap = new Map<string, EmailValidation>();
+  validations.forEach(v => {
+    verificationMap.set(v.email.toLowerCase().trim(), v);
+  });
+
+  // Helper function to escape CSV values
+  const escapeCsvValue = (value: any): string => {
+    if (value === null || value === undefined) return "";
+    const str = String(value);
+    // If value contains comma, newline, or quotes, wrap in quotes and escape internal quotes
+    if (str.includes(",") || str.includes("\n") || str.includes('"')) {
+      return `"${str.replace(/"/g, '""')}"`;
+    }
+    return str;
+  };
+
+  // Build rows by merging original data with verification results
+  const rows = originalData.map(originalRow => {
+    const emailValue = originalRow[emailColumn];
+    const emailKey = emailValue ? String(emailValue).toLowerCase().trim() : "";
+    const verification = verificationMap.get(emailKey);
+
+    // Start with all original columns
+    const rowValues = originalColumns.map(col => escapeCsvValue(originalRow[col]));
+
+    // Add verification columns
+    if (verification) {
+      rowValues.push(
+        verification.status,
+        verification.syntax_valid ? "true" : "false",
+        verification.domain_exists ? "true" : "false",
+        verification.has_mx ? "true" : "false",
+        verification.is_disposable ? "true" : "false",
+        verification.is_role_based ? "true" : "false",
+        verification.alias_of || "",
+        verification.error ? escapeCsvValue(verification.error) : ""
+      );
+    } else {
+      // No verification found - add empty columns
+      rowValues.push("", "", "", "", "", "", "", "");
+    }
+
+    return rowValues.join(",");
+  });
+
+  return [headers.join(","), ...rows].join("\n");
+}
+
+/**
  * Get quality score for email (0-100)
  */
 export function getEmailQualityScore(validation: EmailValidation): number {

@@ -9,12 +9,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
-import { 
-  convertToCSV, 
-  getEmailQualityScore, 
+import {
+  convertToCSV,
+  convertToCSVWithOriginalData,
+  getEmailQualityScore,
   isDeliverable,
   getStatusMessage,
-  type EmailValidation 
+  type EmailValidation
 } from "@/lib/email-verifier";
 import { 
   Download, 
@@ -55,6 +56,8 @@ export default function EmailVerifierPage() {
   const [stats, setStats] = useState<VerificationStats | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<VerificationProgress | null>(null);
+  const [originalData, setOriginalData] = useState<any[]>([]);
+  const [emailColumn, setEmailColumn] = useState<string>("");
 
   // Single email verification
   const verifySingleEmail = async (e: React.FormEvent) => {
@@ -105,18 +108,24 @@ export default function EmailVerifierPage() {
         throw new Error("No data found in CSV file");
       }
 
+      // Store original CSV data
+      setOriginalData(parsed.data as any[]);
+
       // Extract emails from CSV - try common column names
-      const emailColumn = ["email", "emails", "e-mail", "address", "contact_email"]
+      const detectedEmailColumn = ["email", "emails", "e-mail", "address", "contact_email"]
         .find(col => (parsed.data[0] as any)?.[col]);
 
-      if (!emailColumn) {
+      if (!detectedEmailColumn) {
         throw new Error(
           `No email column found. Expected one of: email, emails, e-mail, address, contact_email`
         );
       }
 
+      // Store the email column name
+      setEmailColumn(detectedEmailColumn);
+
       const emails = (parsed.data as any[])
-        .map(row => (row as any)[emailColumn])
+        .map(row => (row as any)[detectedEmailColumn])
         .filter(email => email && typeof email === "string" && email.trim());
 
       if (emails.length === 0) {
@@ -192,7 +201,12 @@ export default function EmailVerifierPage() {
 
       // Auto-download
       if (allResults.length > 0) {
-        downloadResults(allResults, `email_verification_${new Date().toISOString().split('T')[0]}.csv`);
+        downloadResults(
+          allResults,
+          `email_verification_${new Date().toISOString().split('T')[0]}.csv`,
+          parsed.data as any[],
+          detectedEmailColumn
+        );
       }
 
       setCsvFile(null);
@@ -204,8 +218,17 @@ export default function EmailVerifierPage() {
     }
   };
 
-  const downloadResults = (verifications: EmailValidation[], filename: string) => {
-    const csv = convertToCSV(verifications);
+  const downloadResults = (
+    verifications: EmailValidation[],
+    filename: string,
+    originalData?: any[],
+    emailCol?: string
+  ) => {
+    // Use the original data merge if available, otherwise use simple conversion
+    const csv = originalData && emailCol
+      ? convertToCSVWithOriginalData(verifications, originalData, emailCol)
+      : convertToCSV(verifications);
+
     const blob = new Blob([csv], { type: "text/csv" });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -306,7 +329,7 @@ export default function EmailVerifierPage() {
           <CardHeader>
             <CardTitle>Batch Verification</CardTitle>
             <CardDescription>
-              Upload a CSV file with emails (max 100 per file). Supported columns: email, emails, e-mail, address, contact_email
+              Upload a CSV file with emails. Supported columns: email, emails, e-mail, address, contact_email. All original CSV columns will be preserved in the export.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -457,7 +480,9 @@ export default function EmailVerifierPage() {
                   onClick={() =>
                     downloadResults(
                       results,
-                      `email_verification_${new Date().toISOString().split('T')[0]}.csv`
+                      `email_verification_${new Date().toISOString().split('T')[0]}.csv`,
+                      originalData.length > 0 ? originalData : undefined,
+                      emailColumn || undefined
                     )
                   }
                   variant="outline"
